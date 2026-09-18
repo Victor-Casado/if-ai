@@ -1,0 +1,32 @@
+name: PR condition including forks
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: read
+jobs:
+  condition:
+    name: if-ai
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Checkout only the trusted base. Never execute files from the PR head here.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch PR head as data
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+        # gh supplies credentials for private repositories; nothing from the PR is executed.
+        run: |
+          gh auth setup-git
+          git fetch --no-tags origin "refs/pull/${PR_NUMBER}/head"
+      - uses: Victor-Casado/if-ai@v0.1.0
+        with:
+          mode: diff
+          condition: This change does not remove or weaken existing tests.
+          min-confidence: '0.90'
+          api-key: ${{ secrets.TYPESAFE_API_KEY }}

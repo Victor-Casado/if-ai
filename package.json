@@ -9,8 +9,8 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "check": "npm run typecheck && npm test && npm run build"
+    "test": "npm run build && vitest run",
+    "check": "npm run typecheck && npm test"
   },
   "dependencies": { "@actions/core": "3.0.1" },
   "devDependencies": {

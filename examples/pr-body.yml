@@ -1,0 +1,18 @@
+name: PR description
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened]
+permissions: {}
+jobs:
+  description:
+    name: if-ai description
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      # No checkout or execution of PR code. The trusted workflow supplies the condition.
+      - uses: Victor-Casado/if-ai@v0.1.0
+        with:
+          mode: pr-body
+          condition: The description explains the problem being solved and includes a concrete test plan.
+          min-confidence: '0.85'
+          api-key: ${{ secrets.TYPESAFE_API_KEY }}
