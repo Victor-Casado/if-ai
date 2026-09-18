@@ -1,0 +1,36 @@
+name: if-ai
+description: Check pull requests against a plain-English condition with Jev and a minimum confidence.
+author: Victor Casado
+branding:
+  icon: check-circle
+  color: purple
+inputs:
+  condition:
+    description: Plain-English condition that must be true for the selected content.
+    required: true
+  min-confidence:
+    description: Required Jev confidence from 0 to 1. Below this threshold the check fails.
+    required: true
+  mode:
+    description: Content to evaluate. pr-body, diff, or per-file. Every file must pass in per-file mode.
+    default: diff
+  api-key:
+    description: TypeSafe API key. Pass a repository secret.
+    required: true
+  model:
+    description: TypeSafe model identifier. Pin a version for stable behavior.
+    default: jev-1.13.0
+outputs:
+  result:
+    description: String true only when every evaluation is true and meets min-confidence.
+  confidence:
+    description: Minimum confidence across evaluations; 0 on operational error. Not a joint probability.
+  status:
+    description: passed, failed (false or low confidence), or error (incomplete evaluation).
+  failed-files:
+    description: JSON array of failing file paths in per-file mode, or unreadable files in diff mode. Empty for aggregate verdicts.
+  results:
+    description: JSON array of subject names, statuses, confidence values, and sanitized error details.
+runs:
+  using: node24
+  main: dist/index.cjs
