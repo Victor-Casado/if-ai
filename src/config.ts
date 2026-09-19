@@ -1,9 +1,11 @@
 export type Mode = 'pr-body' | 'diff' | 'per-file';
+export type Provider = 'typesafe' | 'openrouter';
 export interface Config {
   condition: string;
   minConfidence: number;
   mode: Mode;
   apiKey: string;
+  provider: Provider;
   model: string;
 }
 
@@ -25,14 +27,18 @@ export function readConfig(input: (name: string) => string): Config {
   if (mode !== 'pr-body' && mode !== 'diff' && mode !== 'per-file') {
     throw new ActionError('mode must be pr-body, diff, or per-file.');
   }
+  const provider = input('provider').trim() || 'typesafe';
+  if (provider !== 'typesafe' && provider !== 'openrouter')
+    throw new ActionError('provider must be typesafe or openrouter.');
   const apiKey = input('api-key').trim();
   if (!apiKey)
     throw new ActionError(
-      'api-key is required. Add TYPESAFE_API_KEY as an Actions secret. Fork PRs do not receive repository secrets.',
+      'api-key is required. Supply an Actions secret for the selected provider. Fork PRs do not receive repository secrets.',
     );
-  const model = input('model').trim() || 'jev-1.13.0';
-  if (!/^[a-zA-Z0-9/._-]{1,100}$/.test(model)) throw new ActionError('Invalid model identifier.');
-  return { condition, minConfidence: Number(threshold), mode, apiKey, model };
+  const model =
+    input('model').trim() || (provider === 'openrouter' ? 'typesafe/jev-1.13' : 'jev-1.13.0');
+  if (!/^[a-zA-Z0-9/~._-]{1,100}$/.test(model)) throw new ActionError('Invalid model identifier.');
+  return { condition, minConfidence: Number(threshold), mode, apiKey, provider, model };
 }
 
 export interface PullRequest {

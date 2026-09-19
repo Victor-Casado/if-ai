@@ -33,7 +33,9 @@ async function main(): Promise<void> {
     pr,
     process.env.GITHUB_WORKSPACE || process.cwd(),
   );
-  core.info(`Evaluating ${subjects.length} subject(s) with ${config.model}; mode=${config.mode}.`);
+  core.info(
+    `Evaluating ${subjects.length} subject(s) with ${config.model} via ${config.provider}; mode=${config.mode}.`,
+  );
   const result = await checkSubjects(subjects, config.minConfidence, (content) =>
     evaluate(config, content),
   );

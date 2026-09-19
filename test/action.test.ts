@@ -15,6 +15,7 @@ interface RunOptions {
   threshold?: string;
   mode?: string;
   brokenSummary?: boolean;
+  provider?: string;
 }
 
 async function run(
@@ -24,6 +25,7 @@ async function run(
     threshold = '0.85',
     mode = 'pr-body',
     brokenSummary = false,
+    provider = '',
   }: RunOptions = {},
 ) {
   const dir = await mkdtemp(join(tmpdir(), 'if-ai-action-'));
@@ -79,6 +81,8 @@ async function run(
           INPUT_CONDITION: 'The content meets our policy.',
           'INPUT_MIN-CONFIDENCE': threshold,
           INPUT_MODE: mode,
+          INPUT_PROVIDER: provider,
+          INPUT_MODEL: '',
           'INPUT_API-KEY': 'secret-value',
           IF_AI_TEST_RESPONSE: mockResponse,
         },
@@ -144,4 +148,16 @@ it('resets passing outputs if summary reporting fails', async () => {
   const result = await run('Policy is met.', { brokenSummary: true });
   expect(result.code).toBe(1);
   expect(result.values).toMatchObject({ result: 'false', confidence: '0', status: 'error' });
+});
+
+it.each([
+  ['Policy is met.', '', 'passed'],
+  ['FAIL_CONDITION', '', 'failed'],
+  ['Policy is met.', 'uncertain', 'failed'],
+  ['PRIVATE_SOURCE', 'error', 'error'],
+])('uses OpenRouter through the shipped bundle for %s / %s', async (body, mockResponse, status) => {
+  const result = await run(body, { provider: 'openrouter', mockResponse });
+  expect(result.code).toBe(status === 'passed' ? 0 : 1);
+  expect(result.values.status).toBe(status);
+  expect(result.log).not.toContain('PRIVATE_SOURCE');
 });

@@ -15,11 +15,13 @@ inputs:
     description: Content to evaluate. pr-body, diff, or per-file. Every file must pass in per-file mode.
     default: diff
   api-key:
-    description: TypeSafe API key. Pass a repository secret.
+    description: API key for the selected provider. Pass an Actions secret.
     required: true
+  provider:
+    description: Jev API provider. typesafe or openrouter.
+    default: typesafe
   model:
-    description: TypeSafe model identifier. Pin a version for stable behavior.
-    default: jev-1.13.0
+    description: Jev model identifier. Defaults to jev-1.13.0 for TypeSafe or typesafe/jev-1.13 for OpenRouter.
 outputs:
   result:
     description: String true only when every evaluation is true and meets min-confidence.

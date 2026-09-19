@@ -19477,14 +19477,17 @@ function readConfig(input) {
   if (mode !== "pr-body" && mode !== "diff" && mode !== "per-file") {
     throw new ActionError("mode must be pr-body, diff, or per-file.");
   }
+  const provider = input("provider").trim() || "typesafe";
+  if (provider !== "typesafe" && provider !== "openrouter")
+    throw new ActionError("provider must be typesafe or openrouter.");
   const apiKey = input("api-key").trim();
   if (!apiKey)
     throw new ActionError(
-      "api-key is required. Add TYPESAFE_API_KEY as an Actions secret. Fork PRs do not receive repository secrets."
+      "api-key is required. Supply an Actions secret for the selected provider. Fork PRs do not receive repository secrets."
     );
-  const model = input("model").trim() || "jev-1.13.0";
-  if (!/^[a-zA-Z0-9/._-]{1,100}$/.test(model)) throw new ActionError("Invalid model identifier.");
-  return { condition, minConfidence: Number(threshold), mode, apiKey, model };
+  const model = input("model").trim() || (provider === "openrouter" ? "typesafe/jev-1.13" : "jev-1.13.0");
+  if (!/^[a-zA-Z0-9/~._-]{1,100}$/.test(model)) throw new ActionError("Invalid model identifier.");
+  return { condition, minConfidence: Number(threshold), mode, apiKey, provider, model };
 }
 function readPullRequest(eventName, payload) {
   if (eventName !== "pull_request" && eventName !== "pull_request_target") {
@@ -19611,7 +19614,10 @@ async function collectSubjects(mode, pr, cwd) {
 // src/jev.ts
 var MAX_REQUEST_BYTES = 28e3;
 var REQUEST_TIMEOUT_MS = 3e4;
-var ENDPOINT = "https://api.typesafe.ai/v1/systemone";
+var ENDPOINTS = {
+  typesafe: "https://api.typesafe.ai/v1/systemone",
+  openrouter: "https://openrouter.ai/api/alpha/decisions"
+};
 function requestBody(config, content) {
   const body = JSON.stringify({
     model: config.model,
@@ -19661,18 +19667,20 @@ function parseDecision(value) {
 function isScore(value) {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
 }
-function httpError(status) {
+function httpError(status, provider) {
+  const name = provider === "openrouter" ? "OpenRouter" : "TypeSafe";
   let hint = "Check the model and request limits.";
-  if (status === 401 || status === 403) hint = "Check your TypeSafe API key and access.";
-  else if (status === 429) hint = "TypeSafe rate limit reached; rerun later.";
-  else if (status >= 500) hint = "TypeSafe is unavailable; rerun later.";
+  if (status === 401 || status === 403) hint = `Check your ${name} API key and access.`;
+  else if (status === 402) hint = `Check your ${name} credits and spending limit.`;
+  else if (status === 429) hint = `${name} rate limit reached; rerun later.`;
+  else if (status >= 500) hint = `${name} is unavailable; rerun later.`;
   return new ActionError(`Jev request failed (HTTP ${status}). ${hint}`);
 }
 async function evaluate(config, content, fetcher = fetch) {
   const body = requestBody(config, content);
   const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
   try {
-    const response = await fetcher(ENDPOINT, {
+    const response = await fetcher(ENDPOINTS[config.provider], {
       method: "POST",
       headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
       body,
@@ -19681,7 +19689,7 @@ async function evaluate(config, content, fetcher = fetch) {
     });
     if (!response.ok) {
       await response.body?.cancel();
-      throw httpError(response.status);
+      throw httpError(response.status, config.provider);
     }
     const reader = response.body?.getReader();
     if (!reader) throw new ActionError("Jev returned an empty response.");
@@ -19811,7 +19819,9 @@ async function main() {
     pr,
     process.env.GITHUB_WORKSPACE || process.cwd()
   );
-  info(`Evaluating ${subjects.length} subject(s) with ${config.model}; mode=${config.mode}.`);
+  info(
+    `Evaluating ${subjects.length} subject(s) with ${config.model} via ${config.provider}; mode=${config.mode}.`
+  );
   const result = await checkSubjects(
     subjects,
     config.minConfidence,

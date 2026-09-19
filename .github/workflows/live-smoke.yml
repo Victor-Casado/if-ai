@@ -1,6 +1,12 @@
 name: Live Jev smoke test
 on:
   workflow_dispatch:
+    inputs:
+      provider:
+        description: Jev API provider to test
+        type: choice
+        options: [typesafe, openrouter]
+        default: typesafe
 permissions:
   contents: read
 jobs:
@@ -15,7 +21,15 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
-      - name: Test the bundled Action against Jev
+      - name: Test Jev through TypeSafe
+        if: inputs.provider == 'typesafe'
         env:
-          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          IF_AI_PROVIDER: typesafe
+          IF_AI_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+        run: node scripts/live-smoke.mjs
+      - name: Test Jev through OpenRouter
+        if: inputs.provider == 'openrouter'
+        env:
+          IF_AI_PROVIDER: openrouter
+          IF_AI_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: node scripts/live-smoke.mjs
