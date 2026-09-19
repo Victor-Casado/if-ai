@@ -1,5 +1,7 @@
 # Action reference
 
+if-ai runs as a step in a GitHub Actions workflow on a `pull_request` or `pull_request_target` event. That is the only supported way to run it; there is no CLI or importable library. See the [README](../README.md) for installation and [examples/](../examples/) for complete workflows.
+
 ## Modes
 
 | Mode       | Jev reads                                               | Use it for                                               |
