@@ -1,0 +1,72 @@
+name: if-ai
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+permissions:
+  contents: read
+concurrency:
+  group: if-ai-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  diff:
+    name: if-ai (${{ matrix.rule.name }})
+    # Fork PRs receive no secrets, and Dependabot PRs are mechanical. Both are
+    # skipped rather than evaluated. Body edits do not change the diff.
+    if: >-
+      github.event.action != 'edited'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both rules assert a universal negative across the whole diff, where
+        # most of the evidence is absent. 0.80 is the bar that kind of claim
+        # supports; rules with directly checkable evidence can ask for more.
+
+        rule:
+          - name: tests
+            min-confidence: '0.80'
+            condition: >-
+              No existing test is deleted or weakened by this change. Replacing a
+              test with an equivalent or stronger test satisfies this condition.
+              A change that modifies no test file satisfies this condition.
+          - name: secrets
+            min-confidence: '0.80'
+            condition: >-
+              No code added in this change logs an API key, request content, or a
+              raw provider error response.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # The local Action is the code under review, which is the point of running
+      # it here. Safe only because fork PRs are excluded above; see SECURITY.md.
+      - uses: ./
+        with:
+          condition: ${{ matrix.rule.condition }}
+          min-confidence: ${{ matrix.rule['min-confidence'] }}
+          mode: diff
+          api-key: ${{ secrets.OPENROUTER_API_KEY }}
+  description:
+    name: if-ai (description)
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository
+      && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      # A shallow checkout, only to make the local Action available. pr-body
+      # mode reads the description from the event payload, not the repository.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./
+        with:
+          condition: >-
+            The description explains the behavior this change alters and why.
+          min-confidence: '0.85'
+          mode: pr-body
+          api-key: ${{ secrets.OPENROUTER_API_KEY }}

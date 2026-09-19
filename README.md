@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/Victor-Casado/if-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/Victor-Casado/if-ai/actions/workflows/ci.yml)
 [![MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Marketplace](https://img.shields.io/badge/marketplace-if--ai%20PR%20Check-8957e5)](https://github.com/marketplace/actions/if-ai-pr-check)
 
 **A GitHub Action that checks pull requests against a rule you write in plain English.**
 
@@ -57,6 +58,8 @@ None of it is pull request review, and none of it is if-ai. It tells you what cl
 Use `diff` when the rule needs context across files. Use `per-file` when every file must satisfy the rule on its own; it evaluates four files at a time and names the failures.
 
 Rules a regex can check should stay a regex. if-ai is for the judgment calls you currently make by hand.
+
+This repository runs if-ai on its own pull requests. [`.github/workflows/if-ai.yml`](.github/workflows/if-ai.yml) holds the three rules it enforces, including the tests rule above.
 
 ## What a failure looks like
 
