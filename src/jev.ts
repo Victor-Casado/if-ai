@@ -2,6 +2,14 @@ import { ActionError, record, type Config, type Provider } from './config.js';
 
 export const MAX_REQUEST_BYTES = 28_000;
 export const REQUEST_TIMEOUT_MS = 30_000;
+// One retry, inside the existing deadline, so a rate limit or a brief provider
+// outage does not turn into a red check that only a rerun can clear.
+export const MAX_ATTEMPTS = 2;
+const DEFAULT_RETRY_DELAY_MS = 1_000;
+// A provider asking for longer than this is telling us it will not be ready
+// inside the deadline. Report the status instead of stalling and asking again.
+const MAX_RETRY_DELAY_MS = 10_000;
+const TIMEOUT_MESSAGE = 'Jev request timed out after 30 seconds. Rerun the check.';
 const ENDPOINTS = {
   typesafe: 'https://api.typesafe.ai/v1/systemone',
   openrouter: 'https://openrouter.ai/api/alpha/decisions',
@@ -10,6 +18,43 @@ const ENDPOINTS = {
 export interface Decision {
   value: boolean;
   confidence: number;
+}
+
+// Reported to the caller so a retry is visible in the log rather than silent.
+export type RetryNotice = (status: number, delayMs: number) => void;
+
+// Rate limits and server faults can clear on their own. A 4xx other than 429
+// describes the request itself and will fail the same way every time.
+export function isRetryableStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+export function retryDelayMs(header: string | null, now = Date.now()): number {
+  const value = header?.trim();
+  if (!value) return DEFAULT_RETRY_DELAY_MS;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(seconds, 0) * 1000;
+  const at = Date.parse(value);
+  if (!Number.isNaN(at)) return Math.max(at - now, 0);
+  return DEFAULT_RETRY_DELAY_MS;
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new ActionError(TIMEOUT_MESSAGE));
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new ActionError(TIMEOUT_MESSAGE));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 export function requestBody(config: Config, content: string): string {
@@ -92,47 +137,69 @@ export async function evaluate(
   config: Config,
   content: string,
   fetcher: typeof fetch = fetch,
+  onRetry: RetryNotice = () => {},
 ): Promise<Decision> {
   const body = requestBody(config, content);
+  // One deadline for the whole call. A retry spends the remaining budget and
+  // can never extend it, so the documented 30 seconds still holds.
   const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-  try {
-    const response = await fetcher(ENDPOINTS[config.provider], {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
-      body,
-      signal,
-      redirect: 'error',
-    });
-    if (!response.ok) {
-      await response.body?.cancel();
-      throw httpError(response.status, config.provider);
-    }
-    // Bound the response too; never print provider bodies, which may echo source or secrets.
-    const reader = response.body?.getReader();
-    if (!reader) throw new ActionError('Jev returned an empty response.');
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > 64_000) {
-        await reader.cancel();
-        throw new ActionError('Jev returned an oversized response.');
-      }
-      chunks.push(value);
-    }
-    let parsed: unknown;
+  const startedAt = Date.now();
+  const remainingMs = () => REQUEST_TIMEOUT_MS - (Date.now() - startedAt);
+  for (let attempt = 1; ; attempt++) {
+    const lastAttempt = attempt >= MAX_ATTEMPTS;
     try {
-      parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    } catch {
-      throw new ActionError('Jev returned malformed JSON.');
+      const response = await fetcher(ENDPOINTS[config.provider], {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
+        body,
+        signal,
+        redirect: 'error',
+      });
+      if (!response.ok) {
+        await response.body?.cancel();
+        const delay = retryDelayMs(response.headers.get('retry-after'));
+        // Report the real status rather than a timeout when the provider asks
+        // for longer than the cap, or than the deadline has left.
+        if (
+          lastAttempt ||
+          !isRetryableStatus(response.status) ||
+          delay > MAX_RETRY_DELAY_MS ||
+          delay >= remainingMs()
+        ) {
+          throw httpError(response.status, config.provider);
+        }
+        onRetry(response.status, delay);
+        await sleep(delay, signal);
+        continue;
+      }
+      // Bound the response too; never print provider bodies, which may echo source or secrets.
+      const reader = response.body?.getReader();
+      if (!reader) throw new ActionError('Jev returned an empty response.');
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > 64_000) {
+          await reader.cancel();
+          throw new ActionError('Jev returned an oversized response.');
+        }
+        chunks.push(value);
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      } catch {
+        throw new ActionError('Jev returned malformed JSON.');
+      }
+      return parseDecision(parsed);
+    } catch (error) {
+      if (error instanceof ActionError) throw error;
+      if (signal.aborted) throw new ActionError(TIMEOUT_MESSAGE);
+      // A transport failure is not retried: it describes the runner or the
+      // network, not a provider state that clears on its own.
+      throw new ActionError('Could not reach Jev. Check connectivity and rerun the check.');
     }
-    return parseDecision(parsed);
-  } catch (error) {
-    if (error instanceof ActionError) throw error;
-    if (signal.aborted)
-      throw new ActionError('Jev request timed out after 30 seconds. Rerun the check.');
-    throw new ActionError('Could not reach Jev. Check connectivity and rerun the check.');
   }
 }

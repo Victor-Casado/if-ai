@@ -59,7 +59,7 @@ Use `if: always()` on a later step to inspect outputs after failure. Pass output
 
 - Each request is limited to 28,000 UTF-8 bytes, including the condition and JSON framing. Oversized input fails without truncation. Per-file mode helps when each individual patch fits.
 - Diff modes accept up to 200 changed paths. Binary files, LFS pointers, submodules, non-UTF-8 patches, and incomplete Git output fail explicitly. Per-file mode still evaluates the other readable files.
-- Each request has a 30-second deadline and no retries. Rerun transient failures. A per-file run makes one paid call per readable, in-limit file; set a job timeout.
+- Each request has a 30-second deadline covering every attempt. A rate limit (HTTP 429) or a server fault (HTTP 5xx) is retried once inside that deadline, honoring `Retry-After` up to 10 seconds; the retry is logged. A provider asking for longer than 10 seconds, or longer than the deadline has left, reports the status instead of waiting. Request faults such as 401, 402, and 422 are not retried, and neither are timeouts or transport failures. A retried request is a second paid call. A per-file run makes one paid call per readable, in-limit file; set a job timeout.
 - The selected content and condition go to TypeSafe, directly or through OpenRouter according to `provider`. if-ai has no backend or telemetry. Logs and summaries contain paths, scores, and sanitized errors, not source or provider response bodies.
 
 PR content can attempt to manipulate the model. Keep tests, scanners, and review for decisions that need them. See [SECURITY.md](../SECURITY.md) for credential and fork-workflow guidance.
