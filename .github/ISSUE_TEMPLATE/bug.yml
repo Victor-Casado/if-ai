@@ -6,7 +6,7 @@ body:
     id: version
     attributes:
       label: Action version or commit SHA
-      placeholder: v0.1.1
+      placeholder: v0.3.0
     validations:
       required: true
   - type: dropdown
@@ -20,7 +20,7 @@ body:
     id: reproduction
     attributes:
       label: Reproduction
-      description: Include the condition, minimum confidence, workflow, and a small input. Remove API keys and private source.
+      description: Include the provider, condition, minimum confidence, workflow, and a small input. Remove API keys and private source.
     validations:
       required: true
   - type: textarea

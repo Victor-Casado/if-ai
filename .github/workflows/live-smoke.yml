@@ -5,8 +5,8 @@ on:
       provider:
         description: Jev API provider to test
         type: choice
-        options: [typesafe, openrouter]
-        default: typesafe
+        options: [openrouter, typesafe]
+        default: openrouter
 permissions:
   contents: read
 jobs:

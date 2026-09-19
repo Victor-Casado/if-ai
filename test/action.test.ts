@@ -108,6 +108,13 @@ it('runs the shipped bundle and writes real GitHub outputs and a summary', async
   expect(result.code).toBe(0);
   expect(result.values).toMatchObject({ result: 'true', confidence: '0.95', status: 'passed' });
   expect(result.summary).toContain('if-ai: passed');
+  expect(result.log).toContain('typesafe/jev-1.13 via openrouter');
+});
+
+it('keeps direct TypeSafe access available through an explicit provider', async () => {
+  const result = await run('Policy is met.', { provider: 'typesafe' });
+  expect(result.code).toBe(0);
+  expect(result.log).toContain('jev-1.13.0 via typesafe');
 });
 
 it.each([

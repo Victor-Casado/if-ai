@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 
-const provider = process.env.IF_AI_PROVIDER || 'typesafe';
+const provider = process.env.IF_AI_PROVIDER || 'openrouter';
 if (provider !== 'typesafe' && provider !== 'openrouter')
   throw new Error('Invalid smoke provider.');
 if (!process.env.IF_AI_API_KEY) {

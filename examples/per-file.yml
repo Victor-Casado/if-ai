@@ -11,15 +11,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: Victor-Casado/if-ai@v0.2.0
+      - uses: Victor-Casado/if-ai@v0.3.0
         with:
           mode: per-file
           condition: >-
             Any newly added user-facing error message explains how to recover.
             Changes without user-facing error messages satisfy this condition.
           min-confidence: '0.85'
-          api-key: ${{ secrets.TYPESAFE_API_KEY }}
+          api-key: ${{ secrets.OPENROUTER_API_KEY }}

@@ -1,6 +1,6 @@
 name: PR description
 # Before enabling: create the jev-approved environment with a required maintainer
-# reviewer, and store TYPESAFE_API_KEY in that environment. Each run costs API quota.
+# reviewer, and store OPENROUTER_API_KEY in that environment. Each run costs API quota.
 on:
   pull_request_target:
     types: [opened, edited, synchronize, reopened]
@@ -13,9 +13,9 @@ jobs:
     timeout-minutes: 2
     steps:
       # No checkout or execution of PR code. The trusted workflow supplies the condition.
-      - uses: Victor-Casado/if-ai@v0.2.0
+      - uses: Victor-Casado/if-ai@v0.3.0
         with:
           mode: pr-body
           condition: The description explains the problem being solved and includes a concrete test plan.
           min-confidence: '0.85'
-          api-key: ${{ secrets.TYPESAFE_API_KEY }}
+          api-key: ${{ secrets.OPENROUTER_API_KEY }}

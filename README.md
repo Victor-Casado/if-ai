@@ -3,13 +3,38 @@
 [![CI](https://github.com/Victor-Casado/if-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/Victor-Casado/if-ai/actions/workflows/ci.yml)
 [![MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Write a pull request check in plain English. Supply a condition and a minimum confidence; [Jev](https://typesafe.ai) evaluates the PR body, the full text diff, or each changed file.
+**Pull request checks, written in plain English.**
 
-The check passes only when the condition is true and confidence meets your threshold. In per-file mode, every file must pass. Failed files appear in the job summary.
+Stop leaving the same "where's the test plan?" comment. Write the rule once and let CI check every PR. if-ai uses [Jev](https://typesafe.ai) to evaluate a PR description or diff, then returns a boolean and a confidence score.
 
-## Quick start
+```yaml
+- uses: Victor-Casado/if-ai@v0.3.0
+  with:
+    condition: The PR description includes a concrete test plan.
+    min-confidence: '0.90'
+    mode: pr-body
+    api-key: ${{ secrets.OPENROUTER_API_KEY }}
+```
 
-Get a key from the [TypeSafe console](https://console.typesafe.ai/) and save it as the repository Actions secret `TYPESAFE_API_KEY`. Add this workflow at `.github/workflows/if-ai.yml`:
+The check passes only when the condition is true **and** confidence meets your threshold. False answers, low confidence, and API errors fail the check.
+
+## What would you check?
+
+| Rule                                                                                                          | Mode       |
+| ------------------------------------------------------------------------------------------------------------- | ---------- |
+| The description explains the problem and includes a concrete test plan.                                       | `pr-body`  |
+| This change does not remove or weaken existing tests.                                                         | `diff`     |
+| New user-facing error messages explain how to recover. Changes without error messages satisfy this condition. | `per-file` |
+
+Use `diff` when the rule needs context across files. Use `per-file` when every file must satisfy the rule independently. It evaluates up to four files at once and names failures in one job summary.
+
+if-ai puts repeated review questions into CI so contributors can address them before a reviewer arrives. You supply the rule and the confidence threshold. There is no if-ai account, server, or subscription, just an API key and a workflow. You pay for inference and any applicable GitHub runner usage.
+
+## Add it to your repo
+
+1. Create an [OpenRouter API key](https://openrouter.ai/settings/keys).
+2. Save it as the Actions secret `OPENROUTER_API_KEY` in your repository settings.
+3. Add `.github/workflows/if-ai.yml`:
 
 ```yaml
 name: if-ai
@@ -21,121 +46,65 @@ permissions:
 jobs:
   condition:
     name: if-ai
-    # Fork PRs need the approval-gated example linked below.
+    # For fork PRs, use the approval-gated example linked below.
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: Victor-Casado/if-ai@v0.2.0
+      - uses: Victor-Casado/if-ai@v0.3.0
         id: policy
         with:
           condition: This change does not remove or weaken existing tests.
           min-confidence: '0.90'
           mode: diff
-          api-key: ${{ secrets.TYPESAFE_API_KEY }}
+          api-key: ${{ secrets.OPENROUTER_API_KEY }}
 ```
 
-This example covers same-repository PRs. Fork PRs are skipped, not evaluated. For public contributions, use the [fork workflow](examples/fork-pr.yml) with a required-review environment to approve each paid run. Dependabot needs its own secret configuration.
+This workflow evaluates same-repository PRs. Fork PRs are skipped. For public contributions, use the [fork workflow](examples/fork-pr.yml) and configure its required-review environment to approve paid runs. Dependabot needs its own secret configuration.
 
-For immutable installation, pin if-ai to the release's full commit SHA. Add the `if-ai` job to your repository rules if it should block merging.
+Try the rule on representative PRs, then make the `if-ai` job required in your repository rules. Pin the Action to a release's full commit SHA for an immutable installation.
 
-## OpenRouter
+OpenRouter is the default and runs `typesafe/jev-1.13` through its [alpha Decisions API](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-questions-and-answers-request). Other chat models are not supported. For a direct TypeSafe key, set `provider: typesafe` and pass `${{ secrets.TYPESAFE_API_KEY }}` to `api-key`.
 
-Save an [OpenRouter key](https://openrouter.ai/settings/keys) as `OPENROUTER_API_KEY`. In the workflow above, set:
+**Upgrading from v0.2:** the default provider changed from TypeSafe to OpenRouter. Existing TypeSafe users must add `provider: typesafe` before upgrading.
 
-```yaml
-with:
-  condition: This change does not remove or weaken existing tests.
-  min-confidence: '0.90'
-  mode: diff
-  provider: openrouter
-  api-key: ${{ secrets.OPENROUTER_API_KEY }}
-```
+## Cost and benchmarks
 
-This still runs Jev and uses its native confidence. It calls OpenRouter's [alpha Decisions API](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-questions-and-answers-request), which may change. Other OpenRouter chat models are not supported. The provider is explicit; if-ai never guesses from a key or falls back to another provider.
+[OpenRouter lists Jev](https://openrouter.ai/typesafe/jev-1.13) at **$0.042 per million input tokens**, with no output-token charge, as of September 19, 2026. At that rate, an evaluation with 5,000 billable input tokens costs $0.00021; 1,000 such evaluations cost $0.21. This is a pricing estimate, not a measured benchmark. It excludes credit-purchase fees and runner costs.
 
-## Modes
+`pr-body` and `diff` make one request. `per-file` makes one request per readable file that fits the request limit, repeating the condition each time. Check costs therefore depend on both content size and file count.
 
-| Mode       | Jev reads                                               | Use it for                                               |
-| ---------- | ------------------------------------------------------- | -------------------------------------------------------- |
-| `pr-body`  | The PR description from the event                       | Description requirements, such as a concrete test plan   |
-| `diff`     | All text changes in one request                         | Conditions involving related changes across files        |
-| `per-file` | One file patch per request, up to four requests at once | A rule that each changed file must satisfy independently |
+Benchmarks are pending. We have not measured review time saved or speed and cost savings against another model.
 
-`diff` is the default. Diff modes require a full-history checkout containing the PR event's base and head commits. The comparison runs from their merge base to the exact head commit. It includes every change hunk and three context lines, not every line of the repository. No paths are filtered out. Renames appear as a deletion and an addition.
+| Measurement                       | Result            |
+| --------------------------------- | ----------------- |
+| Median and p95 request latency    | Pending benchmark |
+| Billed cost per check             | Pending benchmark |
+| Verdicts against labeled examples | Pending benchmark |
+| Comparison with another model     | Pending benchmark |
 
-Per-file evaluations cannot see other files. PR-body mode checks the description, not whether the implementation matches it.
+## Results you can use
 
-## Inputs
+The Action fails the step when the rule does not pass. It also exposes `result`, `confidence`, `status`, `failed-files`, and per-evaluation `results`. GitHub Actions outputs are strings; compare `result` with `'true'` explicitly.
 
-| Input            | Required | Description                                                                                                            |
-| ---------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `condition`      | Yes      | Statement that must be true. Up to 4,000 UTF-8 bytes.                                                                  |
-| `min-confidence` | Yes      | Number from `0` to `1`, inclusive, such as `'0.90'`. No default.                                                       |
-| `api-key`        | Yes      | Key for the selected provider, supplied as a secret.                                                                   |
-| `provider`       | No       | `typesafe` or `openrouter`. Defaults to `typesafe`.                                                                    |
-| `mode`           | No       | `pr-body`, `diff`, or `per-file`. Defaults to `diff`.                                                                  |
-| `model`          | No       | Defaults to `jev-1.13.0` for TypeSafe or `typesafe/jev-1.13` for OpenRouter. Use the selected provider's Jev model ID. |
+In per-file mode, **every file must pass**. The overall confidence is the lowest file confidence. An operational error returns `result: 'false'`, `status: 'error'`, and `confidence: '0'`.
 
-For per-file rules, say how unrelated files should be treated. For example: "Any new user-facing error message explains how to recover. Changes without error messages satisfy this condition."
+See the [input and output reference](docs/reference.md) for exact fields and limits. Complete workflows cover [PR descriptions](examples/pr-body.yml), [full diffs](examples/diff.yml), [per-file rules](examples/per-file.yml), and [fork PRs](examples/fork-pr.yml).
 
-Try your rule against representative PRs before making the job required. Use deterministic checks for rules such as file-path matching.
+## Know the limits
 
-## Results
+Jev makes a model judgment. Confidence is not measured accuracy, and PR content can try to manipulate the answer. Keep tests, scanners, and human review for decisions that need them.
 
-| Outcome                                      | `result`  | `status` | Check |
-| -------------------------------------------- | --------- | -------- | ----- |
-| Every answer is true and meets the threshold | `'true'`  | `passed` | Pass  |
-| Any answer is false or below the threshold   | `'false'` | `failed` | Fail  |
-| Input, Git, network, or API error            | `'false'` | `error`  | Fail  |
+Diff modes read every change hunk, not the entire repository. Oversized requests, binary files, LFS pointers, and submodules fail explicitly; content is never silently truncated. Requests have a 30-second deadline and no retries. See [all limits](docs/reference.md#limits-and-privacy).
 
-An empty body or diff is an error. Confidence equal to the threshold passes.
-
-Outputs are strings in GitHub Actions:
-
-| Output         | Meaning                                                                                                      |
-| -------------- | ------------------------------------------------------------------------------------------------------------ |
-| `result`       | Compare explicitly with `'true'`.                                                                            |
-| `confidence`   | Jev's confidence, or the minimum file confidence in per-file mode. `0` on any operational error.             |
-| `status`       | `passed`, `failed`, or `error`.                                                                              |
-| `failed-files` | JSON array of failed paths in per-file mode, or unreadable paths in diff mode. Empty for aggregate verdicts. |
-| `results`      | JSON array of `name`, `status`, `confidence`, and optional sanitized `error` for each evaluation.            |
-
-Individual statuses are `passed`, `condition-false`, `low-confidence`, or `error`. An individual error has `confidence: null`. Validation failures before evaluation leave the arrays empty.
-
-if-ai uses Jev's two-option Choice API to obtain native confidence. Noul has no separate confidence field. The minimum file confidence is not a joint probability, and model confidence is not measured accuracy. [TypeSafe explains the distinction](https://docs.typesafe.ai/confidence).
-
-Use `if: always()` on a later step to inspect outputs after failure. Pass outputs through environment variables when using them in shell commands.
-
-## Limits and privacy
-
-- Each request is limited to 28,000 UTF-8 bytes, including the condition and JSON framing. Oversized input fails without truncation. Per-file mode helps when each individual patch fits.
-- Diff modes accept up to 200 changed paths. Binary files, LFS pointers, submodules, non-UTF-8 patches, and incomplete Git output fail explicitly. Per-file mode still evaluates the other readable files.
-- Each request has a 30-second deadline and no retries. Rerun transient failures. A per-file run makes one paid call per readable, in-limit file; set a job timeout.
-- The selected content and condition go to TypeSafe, directly or through OpenRouter according to `provider`. if-ai has no backend or telemetry. Logs and summaries contain paths, scores, and sanitized errors, not source or provider response bodies.
-
-PR content can attempt to manipulate the model. Keep tests, scanners, and review for decisions that need them. See [SECURITY.md](SECURITY.md) for credential and fork-workflow guidance.
-
-## Examples
-
-- [PR description](examples/pr-body.yml): a clear problem statement and test plan.
-- [Full diff](examples/diff.yml): preserve existing tests.
-- [Per-file](examples/per-file.yml): check error-message quality and identify failures.
-- [Fork PRs](examples/fork-pr.yml): approve paid runs, then read PR changes without executing contributor code.
+Selected PR content goes to TypeSafe through OpenRouter by default. if-ai has no backend or telemetry. Read [SECURITY.md](SECURITY.md) before using secrets with fork PRs or sending private code.
 
 ## Contributing
 
-Use Node.js 24 and Git:
+Use Node.js 24 and Git, then run `npm ci` and `npm run check`. Tests run offline and need no API key. [CONTRIBUTING.md](CONTRIBUTING.md) explains the code layout and PR process; [Maintaining](docs/maintaining.md) covers releases and repository settings.
 
-```sh
-npm ci
-npm run check
-```
-
-Tests run offline. [CONTRIBUTING.md](CONTRIBUTING.md) covers the code layout, build, and PR process. [Maintaining](docs/maintaining.md) covers releases and repository settings.
-
-[MIT](LICENSE). Independent project; not affiliated with TypeSafe or GitHub.
+[MIT](LICENSE). Independent project; not affiliated with TypeSafe, OpenRouter, or GitHub.

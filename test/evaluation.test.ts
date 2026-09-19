@@ -52,7 +52,11 @@ describe('inputs', () => {
   it('selects provider-specific defaults and preserves explicit model identifiers', () => {
     const read = (extra: Record<string, string>) =>
       readConfig((n) => ({ ...inputs, ...extra })[n] || '');
-    expect(read({})).toMatchObject({ provider: 'typesafe', model: 'jev-1.13.0' });
+    expect(read({})).toMatchObject({ provider: 'openrouter', model: 'typesafe/jev-1.13' });
+    expect(read({ provider: 'typesafe' })).toMatchObject({
+      provider: 'typesafe',
+      model: 'jev-1.13.0',
+    });
     expect(read({ provider: 'openrouter' })).toMatchObject({
       provider: 'openrouter',
       model: 'typesafe/jev-1.13',

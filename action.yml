@@ -19,7 +19,7 @@ inputs:
     required: true
   provider:
     description: Jev API provider. typesafe or openrouter.
-    default: typesafe
+    default: openrouter
   model:
     description: Jev model identifier. Defaults to jev-1.13.0 for TypeSafe or typesafe/jev-1.13 for OpenRouter.
 outputs:

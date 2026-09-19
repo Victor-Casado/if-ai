@@ -17,6 +17,8 @@ Keep these protections enabled:
 
 Dependabot proposes weekly npm and Actions updates. Rebuild `dist/` before merging dependency changes. Do not auto-merge changes to the code consumers execute.
 
+Keep `@types/node` on major 24 while the Action uses Node 24. Dependabot ignores major updates for that package; change the runtime and types together.
+
 ## Publish a release
 
 1. Update the version in `package.json`, the lockfile, README, and examples on a branch.
