@@ -1,21 +1,28 @@
 {
   "name": "if-ai",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Plain-English pull request checks powered by Jev",
   "license": "MIT",
   "type": "module",
-  "engines": { "node": ">=24" },
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && vitest run",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run format:check && npm run typecheck && npm test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
-  "dependencies": { "@actions/core": "3.0.1" },
+  "dependencies": {
+    "@actions/core": "3.0.1"
+  },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "esbuild": "0.28.2",
+    "prettier": "3.9.8",
     "typescript": "7.0.2",
     "vitest": "5.0.1"
   }

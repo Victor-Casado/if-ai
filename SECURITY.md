@@ -8,6 +8,8 @@ PR content may try to manipulate a model's answer. A passing result is an adviso
 
 Use a trusted, pinned release of this Action. Never invoke an untrusted PR's local `./` Action with secrets, install its dependencies, or execute its scripts in a privileged job. In `pull_request_target` workflows, keep workflow logic and checkout on the base side. The fork example fetches the PR head as Git data only.
 
+Public PRs can trigger paid API calls. Before enabling either `pull_request_target` example, create the `jev-approved` environment in repository settings, add a required maintainer reviewer, and store `TYPESAFE_API_KEY` as an environment secret. Declaring an environment name in YAML does not add reviewers automatically. Approve the exact run you intend to fund. Repository-level approval for external contributors does not protect `pull_request_target` runs.
+
 The Action requests no write permissions and makes no GitHub comments, reviews, or merges. Repository rules decide whether its job is required. A same-repository-only workflow skips fork PRs; use the documented fork workflow if they must be evaluated.
 
 Supported releases: the latest 0.x release. Report reproducible problems against the exact version or commit used.

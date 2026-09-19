@@ -1,0 +1,16 @@
+name: Feature request
+description: Describe a workflow that if-ai should support.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to check?
+      description: Give an example condition and explain what the current Action cannot do.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Include alternatives or workarounds you have tried.
