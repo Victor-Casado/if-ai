@@ -59,7 +59,7 @@ Use `diff` when the rule needs context across files. Use `per-file` when every f
 
 Rules a regex can check should stay a regex. if-ai is for the judgment calls you currently make by hand.
 
-This repository runs if-ai on its own pull requests. [`.github/workflows/if-ai.yml`](.github/workflows/if-ai.yml) holds the four rules it enforces, including the two above.
+This repository runs if-ai on its own pull requests. [`.github/workflows/if-ai.yml`](.github/workflows/if-ai.yml) holds the three rules it enforces, including the tests rule above.
 
 ## What a failure looks like
 
