@@ -62,14 +62,14 @@ Rules a regex can check should stay a regex. if-ai is for the judgment calls you
 
 The step fails and the job summary names the files, so the contributor can fix it without waiting for you:
 
-> ## if-ai: failed
->
-> Mode: per-file. Minimum confidence: 0.85. Every subject must pass.
->
-> | Subject               | Result          | Confidence | Details |
-> | --------------------- | --------------- | ---------- | ------- |
-> | `src/auth/session.ts` | condition-false | 0.93       |         |
-> | `src/api/client.ts`   | passed          | 0.97       |         |
+ ## if-ai: failed
+
+ Mode: per-file. Minimum confidence: 0.85. Every subject must pass.
+
+ | Subject               | Result          | Confidence |
+ | --------------------- | --------------- | ---------- |
+ | `src/auth/session.ts` | condition-false | 0.93       |
+ | `src/api/client.ts`   | passed          | 0.97       |
 
 The same values come back as step outputs: `result`, `confidence`, `status`, `failed-files`, and a `results` array. GitHub Actions outputs are strings, so compare `result` with `'true'` explicitly.
 
