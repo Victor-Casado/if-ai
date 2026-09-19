@@ -20,6 +20,11 @@ inputs:
   provider:
     description: Jev API provider. typesafe or openrouter.
     default: openrouter
+  paths:
+    description: >-
+      Optional Git pathspecs, one per line, limiting which changed files diff and
+      per-file modes evaluate. When no changed file matches, the check passes
+      without calling Jev and reports status skipped. Ignored in pr-body mode.
   model:
     description: Jev model identifier. Defaults to jev-1.13.0 for TypeSafe or typesafe/jev-1.13 for OpenRouter.
 outputs:
@@ -28,7 +33,7 @@ outputs:
   confidence:
     description: Minimum confidence across evaluations; 0 on operational error. Not a joint probability.
   status:
-    description: passed, failed (false or low confidence), or error (incomplete evaluation).
+    description: passed, failed (false or low confidence), skipped (no path matched), or error (incomplete evaluation).
   failed-files:
     description: JSON array of failing file paths in per-file mode, or unreadable files in diff mode. Empty for aggregate verdicts.
   results:

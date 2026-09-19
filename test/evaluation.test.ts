@@ -18,6 +18,7 @@ const baseConfig: Config = {
   apiKey: 'secret-value',
   provider: 'typesafe',
   model: 'jev-1.13.0',
+  paths: [],
 };
 const response = (choice = 'true', confidence = 0.9) => ({
   answers: {
@@ -55,6 +56,19 @@ describe('inputs', () => {
     expect(() =>
       readPullRequest('pull_request', { pull_request: { base: { sha: '--help' } } }),
     ).toThrow();
+  });
+  it('reads paths as trimmed, non-empty lines and bounds the list', () => {
+    const read = (extra: Record<string, string>) =>
+      readConfig((n) => ({ ...inputs, ...extra })[n] || '');
+    expect(read({}).paths).toEqual([]);
+    expect(read({ paths: '  src/**  \n\n :(exclude)dist/** \n' }).paths).toEqual([
+      'src/**',
+      ':(exclude)dist/**',
+    ]);
+    expect(() => read({ paths: Array.from({ length: 51 }, () => 'a').join('\n') })).toThrow(
+      'at most 50',
+    );
+    expect(() => read({ paths: 'a'.repeat(201) })).toThrow('200 UTF-8 bytes');
   });
   it('selects provider-specific defaults and preserves explicit model identifiers', () => {
     const read = (extra: Record<string, string>) =>

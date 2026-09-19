@@ -7,7 +7,11 @@ export interface Config {
   apiKey: string;
   provider: Provider;
   model: string;
+  paths: string[];
 }
+
+const MAX_PATHS = 50;
+const MAX_PATH_BYTES = 200;
 
 // Only errors deliberately written by us may reach CI logs.
 export class ActionError extends Error {}
@@ -38,7 +42,17 @@ export function readConfig(input: (name: string) => string): Config {
   const model =
     input('model').trim() || (provider === 'openrouter' ? 'typesafe/jev-1.13' : 'jev-1.13.0');
   if (!/^[a-zA-Z0-9/~._-]{1,100}$/.test(model)) throw new ActionError('Invalid model identifier.');
-  return { condition, minConfidence: Number(threshold), mode, apiKey, provider, model };
+  // Git pathspecs, one per line. Passed after `--`, so a leading dash is a
+  // pathspec and never an option.
+  const paths = input('paths')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '');
+  if (paths.length > MAX_PATHS)
+    throw new ActionError(`paths accepts at most ${MAX_PATHS} entries.`);
+  if (paths.some((path) => Buffer.byteLength(path) > MAX_PATH_BYTES))
+    throw new ActionError(`Each paths entry must be ${MAX_PATH_BYTES} UTF-8 bytes or fewer.`);
+  return { condition, minConfidence: Number(threshold), mode, apiKey, provider, model, paths };
 }
 
 export interface PullRequest {

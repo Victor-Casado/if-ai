@@ -19460,6 +19460,8 @@ function info(message) {
 var import_promises = require("node:fs/promises");
 
 // src/config.ts
+var MAX_PATHS = 50;
+var MAX_PATH_BYTES = 200;
 var ActionError = class extends Error {
 };
 function readConfig(input) {
@@ -19487,7 +19489,12 @@ function readConfig(input) {
     );
   const model = input("model").trim() || (provider === "openrouter" ? "typesafe/jev-1.13" : "jev-1.13.0");
   if (!/^[a-zA-Z0-9/~._-]{1,100}$/.test(model)) throw new ActionError("Invalid model identifier.");
-  return { condition, minConfidence: Number(threshold), mode, apiKey, provider, model };
+  const paths = input("paths").split("\n").map((line) => line.trim()).filter((line) => line !== "");
+  if (paths.length > MAX_PATHS)
+    throw new ActionError(`paths accepts at most ${MAX_PATHS} entries.`);
+  if (paths.some((path) => Buffer.byteLength(path) > MAX_PATH_BYTES))
+    throw new ActionError(`Each paths entry must be ${MAX_PATH_BYTES} UTF-8 bytes or fewer.`);
+  return { condition, minConfidence: Number(threshold), mode, apiKey, provider, model, paths };
 }
 function readPullRequest(eventName, payload) {
   if (eventName !== "pull_request" && eventName !== "pull_request_target") {
@@ -19539,7 +19546,7 @@ async function git(cwd, args) {
     );
   }
 }
-async function collectSubjects(mode, pr, cwd) {
+async function collectSubjects(mode, pr, cwd, paths = []) {
   if (mode === "pr-body") {
     if (!pr.body.trim())
       throw new ActionError("The PR body is empty. Add a description before running this check.");
@@ -19551,10 +19558,13 @@ async function collectSubjects(mode, pr, cwd) {
   const mergeBase = (await git(cwd, ["merge-base", pr.base, pr.head])).trim();
   if (!/^[a-f0-9]{40}$/.test(mergeBase))
     throw new ActionError("Cannot determine the PR merge base.");
-  const raw = await git(cwd, ["diff", ...flags, "--raw", "-z", mergeBase, pr.head, "--"]);
+  const raw = await git(cwd, ["diff", ...flags, "--raw", "-z", mergeBase, pr.head, "--", ...paths]);
   const fields = raw.split("\0");
   if (fields.pop() !== "") throw new ActionError("Invalid Git change list.");
-  if (fields.length === 0) throw new ActionError("The PR has no changed files to evaluate.");
+  if (fields.length === 0) {
+    if (paths.length > 0) return [];
+    throw new ActionError("The PR has no changed files to evaluate.");
+  }
   if (fields.length % 2 !== 0 || fields.length / 2 > MAX_FILES) {
     throw new ActionError(
       "The PR exceeds the 200-file limit or Git returned an invalid change list. Split the PR; nothing was truncated."
@@ -19816,6 +19826,15 @@ function escapeHtml(text) {
     (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]
   );
 }
+function skippedSummary(mode, paths) {
+  return [
+    "<h2>if-ai: skipped</h2>",
+    `<p>Mode: ${escapeHtml(mode)}. No changed file matched the configured paths, so the condition does not apply to this pull request and Jev was not called.</p>`,
+    "<p>Paths:</p>",
+    `<ul>${paths.map((path) => `<li><code>${escapeHtml(path)}</code></li>`).join("")}</ul>`,
+    ""
+  ].join("\n");
+}
 function summary2(result, mode, minConfidence) {
   const rows = result.subjects.map((subject) => {
     const confidence = subject.confidence === null ? "Unavailable" : String(subject.confidence);
@@ -19861,8 +19880,18 @@ async function main() {
   const subjects = await collectSubjects(
     config.mode,
     pr,
-    process.env.GITHUB_WORKSPACE || process.cwd()
+    process.env.GITHUB_WORKSPACE || process.cwd(),
+    config.paths
   );
+  if (subjects.length === 0) {
+    info("No changed file matched paths. The condition does not apply; skipping.");
+    setOutput("result", "true");
+    setOutput("confidence", "1");
+    setOutput("status", "skipped");
+    if (process.env.GITHUB_STEP_SUMMARY)
+      await summary.addRaw(skippedSummary(config.mode, config.paths)).write();
+    return;
+  }
   info(
     `Evaluating ${subjects.length} subject(s) with ${config.model} via ${config.provider}; mode=${config.mode}.`
   );

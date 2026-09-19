@@ -4,7 +4,7 @@ import { ActionError, readConfig, readPullRequest, safeError } from './config.js
 import { collectSubjects } from './git.js';
 import { evaluate } from './jev.js';
 import { checkSubjects } from './check.js';
-import { summary } from './report.js';
+import { skippedSummary, summary } from './report.js';
 
 async function main(): Promise<void> {
   // Initialize failure outputs before any work, including validation.
@@ -32,7 +32,19 @@ async function main(): Promise<void> {
     config.mode,
     pr,
     process.env.GITHUB_WORKSPACE || process.cwd(),
+    config.paths,
   );
+  if (subjects.length === 0) {
+    // Vacuously satisfied: an empty conjunction is true, and nothing was
+    // uncertain because nothing was evaluated.
+    core.info('No changed file matched paths. The condition does not apply; skipping.');
+    core.setOutput('result', 'true');
+    core.setOutput('confidence', '1');
+    core.setOutput('status', 'skipped');
+    if (process.env.GITHUB_STEP_SUMMARY)
+      await core.summary.addRaw(skippedSummary(config.mode, config.paths)).write();
+    return;
+  }
   core.info(
     `Evaluating ${subjects.length} subject(s) with ${config.model} via ${config.provider}; mode=${config.mode}.`,
   );
