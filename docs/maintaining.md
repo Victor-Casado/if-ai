@@ -21,7 +21,7 @@ Dependabot proposes weekly npm and Actions updates. Rebuild `dist/` before mergi
 
 1. Update the version in `package.json`, the lockfile, README, and examples on a branch.
 2. Run `npm ci` and `npm run check`. Commit the rebuilt bundle.
-3. Merge the PR after its checks pass. Run the manual **Live Jev smoke test** on main when the change affects evaluation. It uses the repository secret `TYPESAFE_API_KEY`.
+3. Merge the PR after its checks pass. Run the manual **Live Jev smoke test** on main when the change affects evaluation. Select each affected provider. It uses `TYPESAFE_API_KEY` or `OPENROUTER_API_KEY` from repository secrets.
 4. Tag that checked commit with the exact version, such as `v0.1.1`, and push the tag.
 5. Publish release notes on GitHub. Describe user-visible changes, tests, and known limits. Do not claim model accuracy from smoke tests.
 

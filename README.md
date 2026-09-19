@@ -30,7 +30,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: Victor-Casado/if-ai@v0.1.1
+      - uses: Victor-Casado/if-ai@v0.2.0
         id: policy
         with:
           condition: This change does not remove or weaken existing tests.
@@ -42,6 +42,21 @@ jobs:
 This example covers same-repository PRs. Fork PRs are skipped, not evaluated. For public contributions, use the [fork workflow](examples/fork-pr.yml) with a required-review environment to approve each paid run. Dependabot needs its own secret configuration.
 
 For immutable installation, pin if-ai to the release's full commit SHA. Add the `if-ai` job to your repository rules if it should block merging.
+
+## OpenRouter
+
+Save an [OpenRouter key](https://openrouter.ai/settings/keys) as `OPENROUTER_API_KEY`. In the workflow above, set:
+
+```yaml
+with:
+  condition: This change does not remove or weaken existing tests.
+  min-confidence: '0.90'
+  mode: diff
+  provider: openrouter
+  api-key: ${{ secrets.OPENROUTER_API_KEY }}
+```
+
+This still runs Jev and uses its native confidence. It calls OpenRouter's [alpha Decisions API](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-questions-and-answers-request), which may change. Other OpenRouter chat models are not supported. The provider is explicit; if-ai never guesses from a key or falls back to another provider.
 
 ## Modes
 
@@ -57,13 +72,14 @@ Per-file evaluations cannot see other files. PR-body mode checks the description
 
 ## Inputs
 
-| Input            | Required | Description                                                      |
-| ---------------- | -------- | ---------------------------------------------------------------- |
-| `condition`      | Yes      | Statement that must be true. Up to 4,000 UTF-8 bytes.            |
-| `min-confidence` | Yes      | Number from `0` to `1`, inclusive, such as `'0.90'`. No default. |
-| `api-key`        | Yes      | Direct TypeSafe key, supplied as a secret.                       |
-| `mode`           | No       | `pr-body`, `diff`, or `per-file`. Defaults to `diff`.            |
-| `model`          | No       | Defaults to `jev-1.13.0`. Pin a version when tuning a condition. |
+| Input            | Required | Description                                                                                                            |
+| ---------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `condition`      | Yes      | Statement that must be true. Up to 4,000 UTF-8 bytes.                                                                  |
+| `min-confidence` | Yes      | Number from `0` to `1`, inclusive, such as `'0.90'`. No default.                                                       |
+| `api-key`        | Yes      | Key for the selected provider, supplied as a secret.                                                                   |
+| `provider`       | No       | `typesafe` or `openrouter`. Defaults to `typesafe`.                                                                    |
+| `mode`           | No       | `pr-body`, `diff`, or `per-file`. Defaults to `diff`.                                                                  |
+| `model`          | No       | Defaults to `jev-1.13.0` for TypeSafe or `typesafe/jev-1.13` for OpenRouter. Use the selected provider's Jev model ID. |
 
 For per-file rules, say how unrelated files should be treated. For example: "Any new user-facing error message explains how to recover. Changes without error messages satisfy this condition."
 
@@ -100,7 +116,7 @@ Use `if: always()` on a later step to inspect outputs after failure. Pass output
 - Each request is limited to 28,000 UTF-8 bytes, including the condition and JSON framing. Oversized input fails without truncation. Per-file mode helps when each individual patch fits.
 - Diff modes accept up to 200 changed paths. Binary files, LFS pointers, submodules, non-UTF-8 patches, and incomplete Git output fail explicitly. Per-file mode still evaluates the other readable files.
 - Each request has a 30-second deadline and no retries. Rerun transient failures. A per-file run makes one paid call per readable, in-limit file; set a job timeout.
-- The selected content and condition go directly to TypeSafe. if-ai has no backend or telemetry. Logs and summaries contain paths, scores, and sanitized errors, not source or provider response bodies.
+- The selected content and condition go to TypeSafe, directly or through OpenRouter according to `provider`. if-ai has no backend or telemetry. Logs and summaries contain paths, scores, and sanitized errors, not source or provider response bodies.
 
 PR content can attempt to manipulate the model. Keep tests, scanners, and review for decisions that need them. See [SECURITY.md](SECURITY.md) for credential and fork-workflow guidance.
 

@@ -3,8 +3,13 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync, execFileSync } from 'node:child_process';
 
-if (!process.env.TYPESAFE_API_KEY) {
-  console.error('Add the TYPESAFE_API_KEY repository secret before running the live smoke test.');
+const provider = process.env.IF_AI_PROVIDER || 'typesafe';
+if (provider !== 'typesafe' && provider !== 'openrouter')
+  throw new Error('Invalid smoke provider.');
+if (!process.env.IF_AI_API_KEY) {
+  console.error(
+    `Add the ${provider === 'openrouter' ? 'OPENROUTER_API_KEY' : 'TYPESAFE_API_KEY'} repository secret before running the live smoke test.`,
+  );
   process.exit(1);
 }
 const dir = await mkdtemp(join(tmpdir(), 'if-ai-live-'));
@@ -56,9 +61,11 @@ try {
         GITHUB_WORKSPACE: dir,
         GITHUB_OUTPUT: outputPath,
         INPUT_MODE: mode,
+        INPUT_PROVIDER: provider,
+        INPUT_MODEL: '',
         INPUT_CONDITION: condition,
         'INPUT_MIN-CONFIDENCE': '0.80',
-        'INPUT_API-KEY': process.env.TYPESAFE_API_KEY,
+        'INPUT_API-KEY': process.env.IF_AI_API_KEY,
       },
     });
     const lines = (await readFile(outputPath, 'utf8')).split(/\r?\n/);

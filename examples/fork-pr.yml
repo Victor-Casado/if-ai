@@ -27,7 +27,7 @@ jobs:
         run: |
           gh auth setup-git
           git fetch --no-tags origin "refs/pull/${PR_NUMBER}/head"
-      - uses: Victor-Casado/if-ai@v0.1.1
+      - uses: Victor-Casado/if-ai@v0.2.0
         with:
           mode: diff
           condition: This change does not remove or weaken existing tests.
