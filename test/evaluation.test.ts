@@ -48,6 +48,32 @@ describe('Jev', () => {
     await expect(evaluate(config, 'diff', vi.fn<typeof fetch>().mockResolvedValue(new Response('private response')))).rejects.toThrow('malformed JSON');
     await expect(evaluate(config, 'diff', vi.fn<typeof fetch>().mockRejectedValue(new Error('secret-value')))).rejects.toThrow('Could not reach Jev');
   });
+  it('aborts a stalled request at the deadline', async () => {
+    const controller = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal);
+    try {
+      const fetcher = vi.fn<typeof fetch>().mockImplementation(async (_url, options) => {
+        return new Promise((_resolve, reject) => {
+          options?.signal?.addEventListener('abort', () => reject(new Error('private transport detail')));
+          controller.abort();
+        });
+      });
+      await expect(evaluate(config, 'diff', fetcher)).rejects.toThrow('timed out after 30 seconds');
+      expect(timeout).toHaveBeenCalledWith(30_000);
+    } finally { timeout.mockRestore(); }
+  });
+  it('bounds success response size', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response('x'.repeat(64_001)));
+    await expect(evaluate(config, 'diff', fetcher)).rejects.toThrow('oversized response');
+  });
+  it('rejects inconsistent winning options and probability distributions', () => {
+    const wrongWinner = response();
+    wrongWinner.answers.condition.choice = 'false';
+    expect(() => parseDecision(wrongWinner)).toThrow();
+    const wrongSum = response();
+    wrongSum.answers.condition.probabilities.false = 0.5;
+    expect(() => parseDecision(wrongSum)).toThrow();
+  });
 });
 
 describe('all-file gate', () => {

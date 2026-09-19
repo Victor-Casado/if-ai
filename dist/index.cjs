@@ -19505,7 +19505,7 @@ var import_node_child_process = require("node:child_process");
 var import_node_util = require("node:util");
 var exec = (0, import_node_util.promisify)(import_node_child_process.execFile);
 var MAX_FILES = 200;
-var flags = ["--no-ext-diff", "--no-textconv", "--no-color", "--no-renames"];
+var flags = ["--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--ignore-submodules=none"];
 async function git(cwd, args) {
   try {
     const { stdout } = await exec("git", ["--literal-pathspecs", ...args], {
@@ -19721,6 +19721,9 @@ async function main() {
   if (!result.result) setFailed("if-ai failed: every subject must satisfy the condition and minimum confidence. See the job summary.");
 }
 main().catch((error2) => {
+  setOutput("result", "false");
+  setOutput("confidence", "0");
+  setOutput("status", "error");
   setFailed(safeError(error2));
 });
 /*! For license information please see index.cjs.LEGAL.txt */

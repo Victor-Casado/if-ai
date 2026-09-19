@@ -5,7 +5,7 @@ import type { Subject } from './check.js';
 
 const exec = promisify(execFile);
 const MAX_FILES = 200;
-const flags = ['--no-ext-diff', '--no-textconv', '--no-color', '--no-renames'];
+const flags = ['--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--ignore-submodules=none'];
 
 async function git(cwd: string, args: string[]): Promise<string> {
   try {

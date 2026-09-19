@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -8,21 +8,36 @@ import { afterEach, expect, it } from 'vitest';
 const dirs: string[] = [];
 afterEach(async () => { await Promise.all(dirs.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
 
-async function run(body: string, mockResponse = '', threshold = '0.85') {
+async function run(body: string, mockResponse = '', threshold = '0.85', mode = 'pr-body', brokenSummary = false) {
   const dir = await mkdtemp(join(tmpdir(), 'if-ai-action-'));
   dirs.push(dir);
   const event = join(dir, 'event.json');
   const output = join(dir, 'output');
   const summary = join(dir, 'summary');
-  await writeFile(event, JSON.stringify({ pull_request: { body, base: { sha: 'a'.repeat(40) }, head: { sha: 'b'.repeat(40) } } }));
+  let base = 'a'.repeat(40);
+  let head = 'b'.repeat(40);
+  if (mode !== 'pr-body') {
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    git('init', '-b', 'main');
+    git('config', 'user.name', 'Test');
+    git('config', 'user.email', 'test@example.com');
+    git('commit', '--allow-empty', '-m', 'base');
+    base = git('rev-parse', 'HEAD');
+    await writeFile(join(dir, 'good.txt'), 'The condition is met.');
+    await writeFile(join(dir, 'bad.txt'), 'FAIL_CONDITION');
+    git('add', 'good.txt', 'bad.txt');
+    git('commit', '-m', 'head');
+    head = git('rev-parse', 'HEAD');
+  }
+  await writeFile(event, JSON.stringify({ pull_request: { body, base: { sha: base }, head: { sha: head } } }));
   await writeFile(output, '');
   await writeFile(summary, '');
   const result = await new Promise<{ code: number; log: string }>(resolveResult => {
     execFile(process.execPath, ['--import', pathToFileURL(resolve('test/fixtures/mock-fetch.mjs')).href, resolve('dist/index.cjs')], {
       cwd: dir, windowsHide: true,
-      env: { ...process.env, GITHUB_EVENT_PATH: event, GITHUB_EVENT_NAME: 'pull_request', GITHUB_OUTPUT: output,
-        GITHUB_STEP_SUMMARY: summary, INPUT_CONDITION: 'The content meets our policy.', 'INPUT_MIN-CONFIDENCE': threshold,
-        INPUT_MODE: 'pr-body', 'INPUT_API-KEY': 'secret-value', IF_AI_TEST_RESPONSE: mockResponse },
+      env: { ...process.env, GITHUB_EVENT_PATH: event, GITHUB_EVENT_NAME: 'pull_request', GITHUB_OUTPUT: output, GITHUB_WORKSPACE: dir,
+        GITHUB_STEP_SUMMARY: brokenSummary ? join(dir, 'missing', 'summary') : summary, INPUT_CONDITION: 'The content meets our policy.', 'INPUT_MIN-CONFIDENCE': threshold,
+        INPUT_MODE: mode, 'INPUT_API-KEY': 'secret-value', IF_AI_TEST_RESPONSE: mockResponse },
     }, (error, stdout, stderr) => resolveResult({ code: error ? Number(error.code) || 1 : 0, log: stdout + stderr }));
   });
   const values: Record<string, string> = {};
@@ -59,6 +74,22 @@ it.each([
 
 it('fails with initialized outputs when a required confidence is missing', async () => {
   const result = await run('Policy is met.', '', '');
+  expect(result.code).toBe(1);
+  expect(result.values).toMatchObject({ result: 'false', confidence: '0', status: 'error' });
+});
+
+it('reports the failing file through the actual per-file bundle', async () => {
+  const result = await run('', '', '0.85', 'per-file');
+  expect(result.code).toBe(1);
+  expect(JSON.parse(result.values['failed-files']!)).toEqual(['bad.txt']);
+  expect(JSON.parse(result.values.results!)).toEqual([
+    { name: 'bad.txt', status: 'condition-false', confidence: 0.95 },
+    { name: 'good.txt', status: 'passed', confidence: 0.95 },
+  ]);
+});
+
+it('resets passing outputs if summary reporting fails', async () => {
+  const result = await run('Policy is met.', '', '0.85', 'pr-body', true);
   expect(result.code).toBe(1);
   expect(result.values).toMatchObject({ result: 'false', confidence: '0', status: 'error' });
 });

@@ -3,8 +3,8 @@
 ## Validation status
 
 - Offline tests cover input validation, the Choice contract, all-file aggregation, concurrent requests, actual Git diffs, and the bundled Action's outputs and exit codes.
-- Hosted Linux and Windows CI: pending the first run.
-- Live Jev smoke test: pending the repository secret and a manual run. This is a contract smoke test, not a model-accuracy evaluation.
+- [Hosted Linux and Windows CI passed](https://github.com/Victor-Casado/if-ai/actions/runs/35401282569).
+- [Initial live Jev PR-body smoke test passed](https://github.com/Victor-Casado/if-ai/actions/runs/35427936662). The expanded three-mode test is pending. These are contract smoke tests, not model-accuracy evaluations.
 - No model accuracy, latency, or cost benchmark is claimed.
 
 ## Release procedure

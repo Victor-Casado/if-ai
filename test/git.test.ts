@@ -95,3 +95,13 @@ it('rejects empty comparisons and unavailable commit history', async () => {
   await expect(collectSubjects('diff', { base, head: base, body: '' }, cwd)).rejects.toThrow('no changed files');
   await expect(collectSubjects('diff', { base, head: '0'.repeat(40), body: '' }, cwd)).rejects.toThrow('complete Git diff');
 });
+
+it('does not let Git ignore settings hide submodule changes', async () => {
+  const { cwd, base } = await repository();
+  git(cwd, 'config', 'diff.ignoreSubmodules', 'all');
+  git(cwd, 'update-index', '--add', '--cacheinfo', `160000,${base},vendor`);
+  git(cwd, 'commit', '-m', 'add gitlink');
+  const head = git(cwd, 'rev-parse', 'HEAD');
+  const result = await collectSubjects('per-file', { base, head, body: '' }, cwd);
+  expect(result).toEqual([{ name: 'vendor', error: 'Submodule contents cannot be evaluated as a text diff.' }]);
+});

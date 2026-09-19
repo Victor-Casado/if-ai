@@ -39,4 +39,9 @@ async function main(): Promise<void> {
   if (!result.result) core.setFailed('if-ai failed: every subject must satisfy the condition and minimum confidence. See the job summary.');
 }
 
-main().catch(error => { core.setFailed(safeError(error)); });
+main().catch(error => {
+  core.setOutput('result', 'false');
+  core.setOutput('confidence', '0');
+  core.setOutput('status', 'error');
+  core.setFailed(safeError(error));
+});
