@@ -3,9 +3,9 @@
 [![CI](https://github.com/Victor-Casado/if-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/Victor-Casado/if-ai/actions/workflows/ci.yml)
 [![MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**A pull request check you write in plain English.**
+**A GitHub Action that checks pull requests against a rule you write in plain English.**
 
-You keep leaving the same review comment. _Where's the test plan? You deleted that test._ Write the rule once and every PR gets checked before a human opens it.
+You keep leaving the same review comment. _Where's the test plan? You deleted that test._ Write the rule once as a workflow step, and every PR gets checked before a human opens it.
 
 ```yaml
 - uses: Victor-Casado/if-ai@v0.3.0
@@ -111,9 +111,7 @@ Run it on real PRs for a week before you make the `if-ai` job required. Pin the 
 
 This workflow skips fork PRs. For public contributions, use the [fork workflow](examples/fork-pr.yml) and configure its required-review environment so every paid run is approved. Dependabot needs its own secret configuration.
 
-There is no if-ai account, server, or subscription. You bring an API key and you own the rule; the Action has no backend and no telemetry. OpenRouter is the default and runs `typesafe/jev-1.13` through its [alpha Decisions API](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-questions-and-answers-request); for a direct TypeSafe key, set `provider: typesafe`.
-
-**Upgrading from v0.2:** the default provider changed from TypeSafe to OpenRouter. Existing TypeSafe users must add `provider: typesafe` before upgrading.
+if-ai runs only as a step in a GitHub Actions workflow. There is no CLI, no library, no bot to install, and no if-ai account, server, or subscription. You bring an API key and you own the rule; the Action has no backend and no telemetry. OpenRouter is the default and runs `typesafe/jev-1.13` through its [alpha Decisions API](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-questions-and-answers-request); for a direct TypeSafe key, set `provider: typesafe`.
 
 ## Know the limits
 
