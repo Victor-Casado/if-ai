@@ -19477,7 +19477,7 @@ function readConfig(input) {
   if (mode !== "pr-body" && mode !== "diff" && mode !== "per-file") {
     throw new ActionError("mode must be pr-body, diff, or per-file.");
   }
-  const provider = input("provider").trim() || "typesafe";
+  const provider = input("provider").trim() || "openrouter";
   if (provider !== "typesafe" && provider !== "openrouter")
     throw new ActionError("provider must be typesafe or openrouter.");
   const apiKey = input("api-key").trim();

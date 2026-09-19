@@ -2,7 +2,7 @@
 globalThis.fetch = async (url, options) => {
   const request = JSON.parse(options.body);
   if (
-    process.env.INPUT_PROVIDER === 'openrouter' &&
+    (!process.env.INPUT_PROVIDER || process.env.INPUT_PROVIDER === 'openrouter') &&
     (url !== 'https://openrouter.ai/api/alpha/decisions' || request.model !== 'typesafe/jev-1.13')
   ) {
     throw new Error('Incorrect OpenRouter routing.');
