@@ -1,4 +1,4 @@
-name: if-ai
+name: if-ai PR Check
 description: Check pull requests against a plain-English condition with Jev and a minimum confidence.
 author: Victor Casado
 branding:

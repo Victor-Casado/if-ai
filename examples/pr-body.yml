@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 2
     steps:
       # No checkout or execution of PR code. The trusted workflow supplies the condition.
-      - uses: Victor-Casado/if-ai@v0.3.1
+      - uses: Victor-Casado/if-ai@v0.3.2
         with:
           mode: pr-body
           condition: The description explains the problem being solved and includes a concrete test plan.
