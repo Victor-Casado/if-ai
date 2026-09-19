@@ -6,9 +6,26 @@ import { pathToFileURL } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 
 const dirs: string[] = [];
-afterEach(async () => { await Promise.all(dirs.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
+afterEach(async () => {
+  await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
 
-async function run(body: string, mockResponse = '', threshold = '0.85', mode = 'pr-body', brokenSummary = false) {
+interface RunOptions {
+  mockResponse?: string;
+  threshold?: string;
+  mode?: string;
+  brokenSummary?: boolean;
+}
+
+async function run(
+  body: string,
+  {
+    mockResponse = '',
+    threshold = '0.85',
+    mode = 'pr-body',
+    brokenSummary = false,
+  }: RunOptions = {},
+) {
   const dir = await mkdtemp(join(tmpdir(), 'if-ai-action-'));
   dirs.push(dir);
   const event = join(dir, 'event.json');
@@ -17,7 +34,13 @@ async function run(body: string, mockResponse = '', threshold = '0.85', mode = '
   let base = 'a'.repeat(40);
   let head = 'b'.repeat(40);
   if (mode !== 'pr-body') {
-    const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    const git = (...args: string[]) =>
+      execFileSync('git', args, {
+        cwd: dir,
+        encoding: 'utf8',
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim();
     git('init', '-b', 'main');
     git('config', 'user.name', 'Test');
     git('config', 'user.email', 'test@example.com');
@@ -29,16 +52,40 @@ async function run(body: string, mockResponse = '', threshold = '0.85', mode = '
     git('commit', '-m', 'head');
     head = git('rev-parse', 'HEAD');
   }
-  await writeFile(event, JSON.stringify({ pull_request: { body, base: { sha: base }, head: { sha: head } } }));
+  await writeFile(
+    event,
+    JSON.stringify({ pull_request: { body, base: { sha: base }, head: { sha: head } } }),
+  );
   await writeFile(output, '');
   await writeFile(summary, '');
-  const result = await new Promise<{ code: number; log: string }>(resolveResult => {
-    execFile(process.execPath, ['--import', pathToFileURL(resolve('test/fixtures/mock-fetch.mjs')).href, resolve('dist/index.cjs')], {
-      cwd: dir, windowsHide: true,
-      env: { ...process.env, GITHUB_EVENT_PATH: event, GITHUB_EVENT_NAME: 'pull_request', GITHUB_OUTPUT: output, GITHUB_WORKSPACE: dir,
-        GITHUB_STEP_SUMMARY: brokenSummary ? join(dir, 'missing', 'summary') : summary, INPUT_CONDITION: 'The content meets our policy.', 'INPUT_MIN-CONFIDENCE': threshold,
-        INPUT_MODE: mode, 'INPUT_API-KEY': 'secret-value', IF_AI_TEST_RESPONSE: mockResponse },
-    }, (error, stdout, stderr) => resolveResult({ code: error ? Number(error.code) || 1 : 0, log: stdout + stderr }));
+  const result = await new Promise<{ code: number; log: string }>((resolveResult) => {
+    execFile(
+      process.execPath,
+      [
+        '--import',
+        pathToFileURL(resolve('test/fixtures/mock-fetch.mjs')).href,
+        resolve('dist/index.cjs'),
+      ],
+      {
+        cwd: dir,
+        windowsHide: true,
+        env: {
+          ...process.env,
+          GITHUB_EVENT_PATH: event,
+          GITHUB_EVENT_NAME: 'pull_request',
+          GITHUB_OUTPUT: output,
+          GITHUB_WORKSPACE: dir,
+          GITHUB_STEP_SUMMARY: brokenSummary ? join(dir, 'missing', 'summary') : summary,
+          INPUT_CONDITION: 'The content meets our policy.',
+          'INPUT_MIN-CONFIDENCE': threshold,
+          INPUT_MODE: mode,
+          'INPUT_API-KEY': 'secret-value',
+          IF_AI_TEST_RESPONSE: mockResponse,
+        },
+      },
+      (error, stdout, stderr) =>
+        resolveResult({ code: error ? Number(error.code) || 1 : 0, log: stdout + stderr }),
+    );
   });
   const values: Record<string, string> = {};
   const lines = (await readFile(output, 'utf8')).split(/\r?\n/);
@@ -64,22 +111,27 @@ it.each([
   ['Policy is met.', 'uncertain', 'failed'],
   ['PRIVATE_SOURCE', 'error', 'error'],
 ])('fails the actual process for %s / %s', async (body, mock, status) => {
-  const result = await run(body, mock);
+  const result = await run(body, { mockResponse: mock });
   expect(result.code).toBe(1);
   expect(result.values).toMatchObject({ result: 'false', status });
   expect(result.log).not.toContain('PRIVATE_SOURCE');
   // The masking command itself contains the key; no error message may echo it.
-  expect(result.log.split('\n').filter(line => line.startsWith('::error')).join('\n')).not.toContain('secret-value');
+  expect(
+    result.log
+      .split('\n')
+      .filter((line) => line.startsWith('::error'))
+      .join('\n'),
+  ).not.toContain('secret-value');
 });
 
 it('fails with initialized outputs when a required confidence is missing', async () => {
-  const result = await run('Policy is met.', '', '');
+  const result = await run('Policy is met.', { threshold: '' });
   expect(result.code).toBe(1);
   expect(result.values).toMatchObject({ result: 'false', confidence: '0', status: 'error' });
 });
 
 it('reports the failing file through the actual per-file bundle', async () => {
-  const result = await run('', '', '0.85', 'per-file');
+  const result = await run('', { mode: 'per-file' });
   expect(result.code).toBe(1);
   expect(JSON.parse(result.values['failed-files']!)).toEqual(['Entire PR diff']);
   expect(JSON.parse(result.values.results!)).toEqual([
@@ -89,7 +141,7 @@ it('reports the failing file through the actual per-file bundle', async () => {
 });
 
 it('resets passing outputs if summary reporting fails', async () => {
-  const result = await run('Policy is met.', '', '0.85', 'pr-body', true);
+  const result = await run('Policy is met.', { brokenSummary: true });
   expect(result.code).toBe(1);
   expect(result.values).toMatchObject({ result: 'false', confidence: '0', status: 'error' });
 });

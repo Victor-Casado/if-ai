@@ -19465,17 +19465,23 @@ var ActionError = class extends Error {
 function readConfig(input) {
   const condition = input("condition").trim();
   if (!condition) throw new ActionError("condition is required.");
-  if (Buffer.byteLength(condition) > 4e3) throw new ActionError("condition exceeds 4,000 UTF-8 bytes.");
+  if (Buffer.byteLength(condition) > 4e3)
+    throw new ActionError("condition exceeds 4,000 UTF-8 bytes.");
   const threshold = input("min-confidence").trim();
   if (!/^(?:0(?:\.\d+)?|1(?:\.0+)?)$/.test(threshold)) {
-    throw new ActionError("min-confidence is required and must be a number from 0 to 1, such as 0.85.");
+    throw new ActionError(
+      "min-confidence is required and must be a number from 0 to 1, such as 0.85."
+    );
   }
   const mode = input("mode").trim() || "diff";
   if (mode !== "pr-body" && mode !== "diff" && mode !== "per-file") {
     throw new ActionError("mode must be pr-body, diff, or per-file.");
   }
   const apiKey = input("api-key").trim();
-  if (!apiKey) throw new ActionError("api-key is required. Add TYPESAFE_API_KEY as an Actions secret. Fork PRs do not receive repository secrets.");
+  if (!apiKey)
+    throw new ActionError(
+      "api-key is required. Add TYPESAFE_API_KEY as an Actions secret. Fork PRs do not receive repository secrets."
+    );
   const model = input("model").trim() || "jev-1.13.0";
   if (!/^[a-zA-Z0-9/._-]{1,100}$/.test(model)) throw new ActionError("Invalid model identifier.");
   return { condition, minConfidence: Number(threshold), mode, apiKey, model };
@@ -19490,7 +19496,8 @@ function readPullRequest(eventName, payload) {
   if (typeof base !== "string" || typeof head !== "string" || !/^[a-f0-9]{40}$/.test(base) || !/^[a-f0-9]{40}$/.test(head)) {
     throw new ActionError("The event must contain exact PR base and head commit SHAs.");
   }
-  if (pr?.body != null && typeof pr.body !== "string") throw new ActionError("Invalid PR body in event.");
+  if (pr?.body != null && typeof pr.body !== "string")
+    throw new ActionError("Invalid PR body in event.");
   return { base, head, body: typeof pr?.body === "string" ? pr.body : "" };
 }
 function record(value) {
@@ -19505,10 +19512,16 @@ var import_node_child_process = require("node:child_process");
 var import_node_util = require("node:util");
 var exec = (0, import_node_util.promisify)(import_node_child_process.execFile);
 var MAX_FILES = 200;
-var flags = ["--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--ignore-submodules=none"];
+var flags = [
+  "--no-ext-diff",
+  "--no-textconv",
+  "--no-color",
+  "--no-renames",
+  "--ignore-submodules=none"
+];
 async function git(cwd, args) {
   try {
-    const { stdout } = await exec("git", ["--literal-pathspecs", ...args], {
+    const { stdout } = await exec("git", ["--no-literal-pathspecs", ...args], {
       cwd,
       encoding: "buffer",
       maxBuffer: 2e6,
@@ -19518,24 +19531,31 @@ async function git(cwd, args) {
     });
     return new TextDecoder("utf-8", { fatal: true }).decode(stdout);
   } catch {
-    throw new ActionError("Cannot read the complete Git diff. Use actions/checkout with fetch-depth: 0 and ensure both event commits exist. Git output must be UTF-8 and below 2 MB per command.");
+    throw new ActionError(
+      "Cannot read the complete Git diff. Use actions/checkout with fetch-depth: 0 and ensure both event commits exist. Git output must be UTF-8 and below 2 MB per command."
+    );
   }
 }
 async function collectSubjects(mode, pr, cwd) {
   if (mode === "pr-body") {
-    if (!pr.body.trim()) throw new ActionError("The PR body is empty. Add a description before running this check.");
+    if (!pr.body.trim())
+      throw new ActionError("The PR body is empty. Add a description before running this check.");
     return [{ name: "PR body", content: pr.body }];
   }
   const shallow = (await git(cwd, ["rev-parse", "--is-shallow-repository"])).trim();
-  if (shallow !== "false") throw new ActionError("A full-history checkout is required. Set fetch-depth: 0.");
+  if (shallow !== "false")
+    throw new ActionError("A full-history checkout is required. Set fetch-depth: 0.");
   const mergeBase = (await git(cwd, ["merge-base", pr.base, pr.head])).trim();
-  if (!/^[a-f0-9]{40}$/.test(mergeBase)) throw new ActionError("Cannot determine the PR merge base.");
+  if (!/^[a-f0-9]{40}$/.test(mergeBase))
+    throw new ActionError("Cannot determine the PR merge base.");
   const raw = await git(cwd, ["diff", ...flags, "--raw", "-z", mergeBase, pr.head, "--"]);
   const fields = raw.split("\0");
   if (fields.pop() !== "") throw new ActionError("Invalid Git change list.");
   if (fields.length === 0) throw new ActionError("The PR has no changed files to evaluate.");
   if (fields.length % 2 !== 0 || fields.length / 2 > MAX_FILES) {
-    throw new ActionError("The PR exceeds the 200-file limit or Git returned an invalid change list. Split the PR; nothing was truncated.");
+    throw new ActionError(
+      "The PR exceeds the 200-file limit or Git returned an invalid change list. Split the PR; nothing was truncated."
+    );
   }
   const subjects = [];
   for (let i = 0; i < fields.length; i += 2) {
@@ -19545,10 +19565,32 @@ async function collectSubjects(mode, pr, cwd) {
       throw new ActionError("Git returned an unsupported change record.");
     }
     try {
-      if (/^:(?:160000 |\d{6} 160000 )/.test(meta)) throw new ActionError("Submodule contents cannot be evaluated as a text diff.");
-      const stat2 = await git(cwd, ["diff", ...flags, "--numstat", "-z", mergeBase, pr.head, "--", name]);
-      if (stat2.startsWith("-	-	")) throw new ActionError("Binary content cannot be evaluated as a text diff.");
-      const patch = await git(cwd, ["diff", ...flags, "--unified=3", "--src-prefix=a/", "--dst-prefix=b/", mergeBase, pr.head, "--", name]);
+      if (/^:(?:160000 |\d{6} 160000 )/.test(meta))
+        throw new ActionError("Submodule contents cannot be evaluated as a text diff.");
+      const pathspec = [`:(top,literal)${name}`, `:(top,exclude,literal)${name}/`];
+      const stat2 = await git(cwd, [
+        "diff",
+        ...flags,
+        "--numstat",
+        "-z",
+        mergeBase,
+        pr.head,
+        "--",
+        ...pathspec
+      ]);
+      if (stat2.startsWith("-	-	"))
+        throw new ActionError("Binary content cannot be evaluated as a text diff.");
+      const patch = await git(cwd, [
+        "diff",
+        ...flags,
+        "--unified=3",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        mergeBase,
+        pr.head,
+        "--",
+        ...pathspec
+      ]);
       if (patch.includes("\0")) throw new ActionError("Non-text content cannot be evaluated.");
       if (/^[ +\-]version https:\/\/git-lfs.github.com\/spec\/v1\r?$/m.test(patch)) {
         throw new ActionError("Git LFS pointers do not contain the changed file contents.");
@@ -19586,18 +19628,45 @@ function requestBody(config, content) {
     }
   });
   if (Buffer.byteLength(body) > MAX_REQUEST_BYTES) {
-    throw new ActionError("Input exceeds the 28,000-byte request limit. Nothing was truncated. Use per-file mode for a large combined diff; reduce the PR if a single file is too large.");
+    throw new ActionError(
+      "Input exceeds the 28,000-byte request limit. Nothing was truncated. Use per-file mode for a large combined diff; reduce the PR if a single file is too large."
+    );
   }
   return body;
 }
 function parseDecision(value) {
-  const answer = record(record(record(value)?.answers)?.condition);
+  const response = record(value);
+  const answers = record(response?.answers);
+  const answer = record(answers?.condition);
+  const invalidDecision = () => new ActionError(
+    "Jev returned an invalid decision. Expected true/false Choice probabilities and confidence in [0, 1]."
+  );
+  if (answer?.type !== "choice" || answer.choice !== "true" && answer.choice !== "false" || !isScore(answer.confidence)) {
+    throw invalidDecision();
+  }
   const probabilities = record(answer?.probabilities);
-  const validScore = (n) => typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1;
-  if (answer?.type !== "choice" || answer.choice !== "true" && answer.choice !== "false" || !validScore(answer.confidence) || !validScore(probabilities?.true) || !validScore(probabilities?.false) || Object.keys(probabilities).length !== 2 || Math.abs(probabilities.true + probabilities.false - 1) > 1e-3 || probabilities[answer.choice] < probabilities[answer.choice === "true" ? "false" : "true"]) {
-    throw new ActionError("Jev returned an invalid decision. Expected true/false Choice probabilities and confidence in [0, 1].");
+  if (!probabilities || Object.keys(probabilities).length !== 2 || !isScore(probabilities.true) || !isScore(probabilities.false)) {
+    throw invalidDecision();
+  }
+  if (Math.abs(probabilities.true + probabilities.false - 1) > 1e-3) {
+    throw invalidDecision();
+  }
+  const winner = answer.choice === "true" ? probabilities.true : probabilities.false;
+  const other = answer.choice === "true" ? probabilities.false : probabilities.true;
+  if (winner < other) {
+    throw invalidDecision();
   }
   return { value: answer.choice === "true", confidence: answer.confidence };
+}
+function isScore(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+function httpError(status) {
+  let hint = "Check the model and request limits.";
+  if (status === 401 || status === 403) hint = "Check your TypeSafe API key and access.";
+  else if (status === 429) hint = "TypeSafe rate limit reached; rerun later.";
+  else if (status >= 500) hint = "TypeSafe is unavailable; rerun later.";
+  return new ActionError(`Jev request failed (HTTP ${status}). ${hint}`);
 }
 async function evaluate(config, content, fetcher = fetch) {
   const body = requestBody(config, content);
@@ -19612,8 +19681,7 @@ async function evaluate(config, content, fetcher = fetch) {
     });
     if (!response.ok) {
       await response.body?.cancel();
-      const hint = response.status === 401 || response.status === 403 ? "Check your TypeSafe API key and access." : response.status === 429 ? "TypeSafe rate limit reached; rerun later." : response.status >= 500 ? "TypeSafe is unavailable; rerun later." : "Check the model and request limits.";
-      throw new ActionError(`Jev request failed (HTTP ${response.status}). ${hint}`);
+      throw httpError(response.status);
     }
     const reader = response.body?.getReader();
     if (!reader) throw new ActionError("Jev returned an empty response.");
@@ -19638,53 +19706,82 @@ async function evaluate(config, content, fetcher = fetch) {
     return parseDecision(parsed);
   } catch (error2) {
     if (error2 instanceof ActionError) throw error2;
-    if (signal.aborted) throw new ActionError("Jev request timed out after 30 seconds. Rerun the check.");
+    if (signal.aborted)
+      throw new ActionError("Jev request timed out after 30 seconds. Rerun the check.");
     throw new ActionError("Could not reach Jev. Check connectivity and rerun the check.");
   }
 }
 
 // src/check.ts
-async function checkSubjects(subjects, minConfidence, judge, concurrency = 4) {
+async function checkSubjects(subjects, minConfidence, judge) {
   const results = new Array(subjects.length);
-  let next = 0;
+  let nextIndex = 0;
   async function worker() {
-    while (next < subjects.length) {
-      const index = next++;
+    while (nextIndex < subjects.length) {
+      const index = nextIndex++;
       const subject = subjects[index];
       try {
         if (subject.error || !subject.content?.trim()) {
-          results[index] = { name: subject.name, status: "error", confidence: null, error: subject.error || "No content to evaluate." };
+          results[index] = {
+            name: subject.name,
+            status: "error",
+            confidence: null,
+            error: subject.error || "No content to evaluate."
+          };
           continue;
         }
         const answer = await judge(subject.content);
-        const status = answer.confidence < minConfidence ? "low-confidence" : answer.value ? "passed" : "condition-false";
-        results[index] = { name: subject.name, status, confidence: answer.confidence };
+        let status2 = answer.value ? "passed" : "condition-false";
+        if (answer.confidence < minConfidence) status2 = "low-confidence";
+        results[index] = { name: subject.name, status: status2, confidence: answer.confidence };
       } catch (error2) {
-        results[index] = { name: subject.name, status: "error", confidence: null, error: safeError(error2) };
+        results[index] = {
+          name: subject.name,
+          status: "error",
+          confidence: null,
+          error: safeError(error2)
+        };
       }
     }
   }
-  await Promise.all(Array.from({ length: Math.min(concurrency, subjects.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(4, subjects.length) }, worker));
   const hasError = results.some((r) => r.status === "error") || results.length === 0;
   const passed = !hasError && results.every((r) => r.status === "passed");
+  let status = passed ? "passed" : "failed";
+  if (hasError) status = "error";
   return {
     result: passed,
     confidence: hasError ? 0 : Math.min(...results.map((r) => r.confidence)),
-    status: hasError ? "error" : passed ? "passed" : "failed",
+    status,
     subjects: results
   };
 }
 
 // src/report.ts
 function escapeHtml(text) {
-  return text.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+  return text.replace(
+    /[&<>"']/g,
+    (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]
+  );
 }
 function summary2(result, mode, minConfidence) {
-  const rows = result.subjects.map((s) => "<tr><td><code>" + escapeHtml(s.name) + "</code></td><td>" + s.status + "</td><td>" + (s.confidence === null ? "Unavailable" : String(s.confidence)) + "</td><td>" + escapeHtml(s.error || "") + "</td></tr>").join("\n");
-  return `<h2>if-ai: ${result.status}</h2>
-<p>Mode: ${escapeHtml(mode)}. Minimum confidence: ${minConfidence}. Every subject must pass.</p>
-<table><thead><tr><th>Subject</th><th>Result</th><th>Confidence</th><th>Details</th></tr></thead><tbody>
-` + rows + "\n</tbody></table>\n<p>Confidence describes model certainty, not measured accuracy. In per-file mode the aggregate is the minimum file confidence, not a joint probability. An error makes aggregate confidence 0.</p>\n";
+  const rows = result.subjects.map((subject) => {
+    const confidence = subject.confidence === null ? "Unavailable" : String(subject.confidence);
+    return `<tr>
+<td><code>${escapeHtml(subject.name)}</code></td>
+<td>${subject.status}</td>
+<td>${confidence}</td>
+<td>${escapeHtml(subject.error || "")}</td>
+</tr>`;
+  }).join("\n");
+  return [
+    `<h2>if-ai: ${result.status}</h2>`,
+    `<p>Mode: ${escapeHtml(mode)}. Minimum confidence: ${minConfidence}. Every subject must pass.</p>`,
+    "<table><thead><tr><th>Subject</th><th>Result</th><th>Confidence</th><th>Details</th></tr></thead>",
+    `<tbody>${rows}</tbody></table>`,
+    "<p>Confidence describes model certainty, not measured accuracy. In per-file mode it is the minimum file confidence. An error makes aggregate confidence 0.</p>",
+    ""
+  ].join("\n");
 }
 
 // src/main.ts
@@ -19698,7 +19795,10 @@ async function main() {
   if (key) setSecret(key);
   const config = readConfig((name) => getInput(name));
   const eventPath = process.env.GITHUB_EVENT_PATH;
-  if (!eventPath) throw new ActionError("GITHUB_EVENT_PATH is missing. Run this action in a pull request workflow.");
+  if (!eventPath)
+    throw new ActionError(
+      "GITHUB_EVENT_PATH is missing. Run this action in a pull request workflow."
+    );
   let payload;
   try {
     payload = JSON.parse(await (0, import_promises.readFile)(eventPath, "utf8"));
@@ -19706,20 +19806,39 @@ async function main() {
     throw new ActionError("Could not read the pull request event.");
   }
   const pr = readPullRequest(process.env.GITHUB_EVENT_NAME, payload);
-  const subjects = await collectSubjects(config.mode, pr, process.env.GITHUB_WORKSPACE || process.cwd());
+  const subjects = await collectSubjects(
+    config.mode,
+    pr,
+    process.env.GITHUB_WORKSPACE || process.cwd()
+  );
   info(`Evaluating ${subjects.length} subject(s) with ${config.model}; mode=${config.mode}.`);
-  const result = await checkSubjects(subjects, config.minConfidence, (content) => evaluate(config, content));
+  const result = await checkSubjects(
+    subjects,
+    config.minConfidence,
+    (content) => evaluate(config, content)
+  );
   setOutput("result", String(result.result));
   setOutput("confidence", String(result.confidence));
   setOutput("status", result.status);
   const hasFileResults = config.mode === "per-file" || config.mode === "diff" && subjects.some((s) => s.error);
-  setOutput("failed-files", JSON.stringify(hasFileResults ? result.subjects.filter((s) => s.status !== "passed").map((s) => s.name) : []));
+  setOutput(
+    "failed-files",
+    JSON.stringify(
+      hasFileResults ? result.subjects.filter((s) => s.status !== "passed").map((s) => s.name) : []
+    )
+  );
   setOutput("results", JSON.stringify(result.subjects));
-  if (process.env.GITHUB_STEP_SUMMARY) await summary.addRaw(summary2(result, config.mode, config.minConfidence)).write();
+  if (process.env.GITHUB_STEP_SUMMARY)
+    await summary.addRaw(summary2(result, config.mode, config.minConfidence)).write();
   for (const subject of result.subjects.filter((s) => s.status !== "passed")) {
-    error(`${subject.name}: ${subject.status}${subject.error ? ". " + subject.error : ` (confidence ${subject.confidence}; required ${config.minConfidence}).`}`);
+    error(
+      `${subject.name}: ${subject.status}${subject.error ? ". " + subject.error : ` (confidence ${subject.confidence}; required ${config.minConfidence}).`}`
+    );
   }
-  if (!result.result) setFailed("if-ai failed: every subject must satisfy the condition and minimum confidence. See the job summary.");
+  if (!result.result)
+    setFailed(
+      "if-ai failed: every subject must satisfy the condition and minimum confidence. See the job summary."
+    );
 }
 main().catch((error2) => {
   setOutput("result", "false");

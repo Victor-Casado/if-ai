@@ -5,6 +5,7 @@ permissions:
   contents: read
 jobs:
   smoke:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:

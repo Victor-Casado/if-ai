@@ -1,4 +1,6 @@
 name: PR description
+# Before enabling: create the jev-approved environment with a required maintainer
+# reviewer, and store TYPESAFE_API_KEY in that environment. Each run costs API quota.
 on:
   pull_request_target:
     types: [opened, edited, synchronize, reopened]
@@ -7,10 +9,11 @@ jobs:
   description:
     name: if-ai description
     runs-on: ubuntu-latest
+    environment: jev-approved
     timeout-minutes: 2
     steps:
       # No checkout or execution of PR code. The trusted workflow supplies the condition.
-      - uses: Victor-Casado/if-ai@v0.1.0
+      - uses: Victor-Casado/if-ai@v0.1.1
         with:
           mode: pr-body
           condition: The description explains the problem being solved and includes a concrete test plan.

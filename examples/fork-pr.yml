@@ -1,4 +1,6 @@
 name: PR condition including forks
+# Before enabling: create the jev-approved environment with a required maintainer
+# reviewer, and store TYPESAFE_API_KEY there. Review each run before approving it.
 on:
   pull_request_target:
     types: [opened, synchronize, reopened]
@@ -8,6 +10,7 @@ jobs:
   condition:
     name: if-ai
     runs-on: ubuntu-latest
+    environment: jev-approved
     timeout-minutes: 10
     steps:
       # Checkout only the trusted base. Never execute files from the PR head here.
@@ -24,7 +27,7 @@ jobs:
         run: |
           gh auth setup-git
           git fetch --no-tags origin "refs/pull/${PR_NUMBER}/head"
-      - uses: Victor-Casado/if-ai@v0.1.0
+      - uses: Victor-Casado/if-ai@v0.1.1
         with:
           mode: diff
           condition: This change does not remove or weaken existing tests.

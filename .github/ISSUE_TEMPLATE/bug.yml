@@ -1,0 +1,32 @@
+name: Bug report
+description: Report an incorrect result or Action failure.
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Action version or commit SHA
+      placeholder: v0.1.1
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      options: [pr-body, diff, per-file]
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Include the condition, minimum confidence, workflow, and a small input. Remove API keys and private source.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected and actual behavior
+      description: Include the status or sanitized error message. A link to a public workflow run helps.
+    validations:
+      required: true
