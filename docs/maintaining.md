@@ -29,4 +29,6 @@ Keep `@types/node` on major 24 while the Action uses Node 24. Dependabot ignores
 
 Do not retag an existing release. Consumers can use an exact version or its full commit SHA.
 
+The Marketplace listing name in `action.yml` is `if-ai PR Check`, not `if-ai`. Marketplace names must be unique across every action, user, and organization, and the GitHub user `if-ai` already exists. The repository name and the `uses:` path are unaffected.
+
 GitHub releases are the changelog. The repository does not keep a second copy of release notes. A Marketplace listing is optional and separate from publishing a usable Action.
