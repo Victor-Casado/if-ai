@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ActionError, readConfig, readPullRequest, type Config } from '../src/config.js';
 import { checkSubjects } from '../src/check.js';
-import { evaluate, parseDecision, requestBody } from '../src/jev.js';
+import {
+  MAX_ATTEMPTS,
+  evaluate,
+  isRetryableStatus,
+  parseDecision,
+  requestBody,
+  retryDelayMs,
+} from '../src/jev.js';
 import { summary } from '../src/report.js';
 
 const baseConfig: Config = {
@@ -69,6 +76,29 @@ describe('inputs', () => {
   });
 });
 
+describe('retry policy', () => {
+  it('retries a rate limit or a server fault, but not a request fault', () => {
+    expect([429, 500, 502, 503, 529].every(isRetryableStatus)).toBe(true);
+    expect([400, 401, 402, 403, 404, 422].some(isRetryableStatus)).toBe(false);
+  });
+  it('defaults the wait when Retry-After is absent or unparseable', () => {
+    expect(retryDelayMs(null)).toBe(1_000);
+    expect(retryDelayMs('  ')).toBe(1_000);
+    expect(retryDelayMs('soon')).toBe(1_000);
+  });
+  it('reads Retry-After as seconds, including zero', () => {
+    expect(retryDelayMs('0')).toBe(0);
+    expect(retryDelayMs('2')).toBe(2_000);
+    expect(retryDelayMs('-5')).toBe(0);
+  });
+  it('reads Retry-After as an HTTP date, never below zero', () => {
+    const now = Date.parse('2026-01-01T00:00:00Z');
+    expect(retryDelayMs('Thu, 01 Jan 2026 00:00:03 GMT', now)).toBe(3_000);
+    expect(retryDelayMs('Thu, 01 Jan 2026 00:00:00 GMT', now)).toBe(0);
+    expect(retryDelayMs('Wed, 31 Dec 2025 23:59:00 GMT', now)).toBe(0);
+  });
+});
+
 describe.each(['typesafe', 'openrouter'] as const)('Jev via %s', (provider) => {
   const config: Config = {
     ...baseConfig,
@@ -107,11 +137,47 @@ describe.each(['typesafe', 'openrouter'] as const)('Jev via %s', (provider) => {
   ])('rejects malformed decisions', (value) => {
     expect(() => parseDecision(value)).toThrow(ActionError);
   });
-  it.each([401, 402, 403, 422, 429, 500, 529])('sanitizes HTTP %s errors', async (status) => {
+  it.each([401, 402, 403, 422])(
+    'sanitizes HTTP %s errors and does not retry a permanent failure',
+    async (status) => {
+      const fetcher = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(new Response('secret-value and private code', { status }));
+      await expect(evaluate(config, 'private code', fetcher)).rejects.toThrow(`HTTP ${status}`);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    },
+  );
+  it.each([429, 500, 529])('sanitizes HTTP %s errors after one retry', async (status) => {
     const fetcher = vi
       .fn<typeof fetch>()
-      .mockResolvedValue(new Response('secret-value and private code', { status }));
+      .mockResolvedValue(
+        new Response('secret-value and private code', { status, headers: { 'retry-after': '0' } }),
+      );
     await expect(evaluate(config, 'private code', fetcher)).rejects.toThrow(`HTTP ${status}`);
+    expect(fetcher).toHaveBeenCalledTimes(MAX_ATTEMPTS);
+  });
+  it('returns the decision when the retry succeeds', async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('', { status: 429, headers: { 'retry-after': '0' } }))
+      .mockResolvedValue(Response.json(response()));
+    expect(await evaluate(config, 'diff', fetcher)).toEqual({ value: true, confidence: 0.9 });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+  it('reports every retry to the caller instead of retrying silently', async () => {
+    const notices: Array<[number, number]> = [];
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('', { status: 503, headers: { 'retry-after': '0' } }))
+      .mockResolvedValue(Response.json(response()));
+    await evaluate(config, 'diff', fetcher, (status, delayMs) => notices.push([status, delayMs]));
+    expect(notices).toEqual([[503, 0]]);
+  });
+  it('reports the provider status when the wait would outlast the deadline', async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response('', { status: 429, headers: { 'retry-after': '30' } }));
+    await expect(evaluate(config, 'diff', fetcher)).rejects.toThrow('HTTP 429');
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
   it('names the selected provider when credits are exhausted', async () => {

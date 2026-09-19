@@ -19614,10 +19614,43 @@ async function collectSubjects(mode, pr, cwd) {
 // src/jev.ts
 var MAX_REQUEST_BYTES = 28e3;
 var REQUEST_TIMEOUT_MS = 3e4;
+var MAX_ATTEMPTS = 2;
+var DEFAULT_RETRY_DELAY_MS = 1e3;
+var MAX_RETRY_DELAY_MS = 1e4;
+var TIMEOUT_MESSAGE = "Jev request timed out after 30 seconds. Rerun the check.";
 var ENDPOINTS = {
   typesafe: "https://api.typesafe.ai/v1/systemone",
   openrouter: "https://openrouter.ai/api/alpha/decisions"
 };
+function isRetryableStatus(status) {
+  return status === 429 || status >= 500;
+}
+function retryDelayMs(header, now = Date.now()) {
+  const value = header?.trim();
+  if (!value) return DEFAULT_RETRY_DELAY_MS;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(seconds, 0) * 1e3;
+  const at = Date.parse(value);
+  if (!Number.isNaN(at)) return Math.max(at - now, 0);
+  return DEFAULT_RETRY_DELAY_MS;
+}
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new ActionError(TIMEOUT_MESSAGE));
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new ActionError(TIMEOUT_MESSAGE));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
 function requestBody(config, content) {
   const body = JSON.stringify({
     model: config.model,
@@ -19676,47 +19709,58 @@ function httpError(status, provider) {
   else if (status >= 500) hint = `${name} is unavailable; rerun later.`;
   return new ActionError(`Jev request failed (HTTP ${status}). ${hint}`);
 }
-async function evaluate(config, content, fetcher = fetch) {
+async function evaluate(config, content, fetcher = fetch, onRetry = () => {
+}) {
   const body = requestBody(config, content);
   const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-  try {
-    const response = await fetcher(ENDPOINTS[config.provider], {
-      method: "POST",
-      headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
-      body,
-      signal,
-      redirect: "error"
-    });
-    if (!response.ok) {
-      await response.body?.cancel();
-      throw httpError(response.status, config.provider);
-    }
-    const reader = response.body?.getReader();
-    if (!reader) throw new ActionError("Jev returned an empty response.");
-    const chunks = [];
-    let size = 0;
-    for (; ; ) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > 64e3) {
-        await reader.cancel();
-        throw new ActionError("Jev returned an oversized response.");
-      }
-      chunks.push(value);
-    }
-    let parsed;
+  const startedAt = Date.now();
+  const remainingMs = () => REQUEST_TIMEOUT_MS - (Date.now() - startedAt);
+  for (let attempt = 1; ; attempt++) {
+    const lastAttempt = attempt >= MAX_ATTEMPTS;
     try {
-      parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    } catch {
-      throw new ActionError("Jev returned malformed JSON.");
+      const response = await fetcher(ENDPOINTS[config.provider], {
+        method: "POST",
+        headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
+        body,
+        signal,
+        redirect: "error"
+      });
+      if (!response.ok) {
+        await response.body?.cancel();
+        const delay = retryDelayMs(response.headers.get("retry-after"));
+        if (lastAttempt || !isRetryableStatus(response.status) || delay > MAX_RETRY_DELAY_MS || delay >= remainingMs()) {
+          throw httpError(response.status, config.provider);
+        }
+        onRetry(response.status, delay);
+        await sleep(delay, signal);
+        continue;
+      }
+      const reader = response.body?.getReader();
+      if (!reader) throw new ActionError("Jev returned an empty response.");
+      const chunks = [];
+      let size = 0;
+      for (; ; ) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > 64e3) {
+          await reader.cancel();
+          throw new ActionError("Jev returned an oversized response.");
+        }
+        chunks.push(value);
+      }
+      let parsed;
+      try {
+        parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      } catch {
+        throw new ActionError("Jev returned malformed JSON.");
+      }
+      return parseDecision(parsed);
+    } catch (error2) {
+      if (error2 instanceof ActionError) throw error2;
+      if (signal.aborted) throw new ActionError(TIMEOUT_MESSAGE);
+      throw new ActionError("Could not reach Jev. Check connectivity and rerun the check.");
     }
-    return parseDecision(parsed);
-  } catch (error2) {
-    if (error2 instanceof ActionError) throw error2;
-    if (signal.aborted)
-      throw new ActionError("Jev request timed out after 30 seconds. Rerun the check.");
-    throw new ActionError("Could not reach Jev. Check connectivity and rerun the check.");
   }
 }
 
@@ -19825,7 +19869,12 @@ async function main() {
   const result = await checkSubjects(
     subjects,
     config.minConfidence,
-    (content) => evaluate(config, content)
+    (content) => evaluate(
+      config,
+      content,
+      fetch,
+      (status, delayMs) => info(`Jev returned HTTP ${status}; retrying once in ${delayMs} ms.`)
+    )
   );
   setOutput("result", String(result.result));
   setOutput("confidence", String(result.confidence));

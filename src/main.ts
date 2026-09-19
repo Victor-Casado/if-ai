@@ -37,7 +37,9 @@ async function main(): Promise<void> {
     `Evaluating ${subjects.length} subject(s) with ${config.model} via ${config.provider}; mode=${config.mode}.`,
   );
   const result = await checkSubjects(subjects, config.minConfidence, (content) =>
-    evaluate(config, content),
+    evaluate(config, content, fetch, (status, delayMs) =>
+      core.info(`Jev returned HTTP ${status}; retrying once in ${delayMs} ms.`),
+    ),
   );
   core.setOutput('result', String(result.result));
   core.setOutput('confidence', String(result.confidence));

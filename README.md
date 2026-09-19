@@ -121,7 +121,7 @@ if-ai runs only as a step in a GitHub Actions workflow. There is no CLI, no libr
 
 A passing if-ai check is advisory. Confidence is calibrated certainty, not measured accuracy, and PR content can try to talk the model into a verdict it wants. Keep your tests, your scanners, and your human reviewers for the decisions that need to be right.
 
-Diff modes read every change hunk with three context lines, not the whole repository, and require a full-history checkout. Requests cap at 28,000 UTF-8 bytes and 200 changed paths. Oversized requests, binary files, LFS pointers, and submodules fail explicitly; content is never silently truncated. Each request has a 30-second deadline and no retries.
+Diff modes read every change hunk with three context lines, not the whole repository, and require a full-history checkout. Requests cap at 28,000 UTF-8 bytes and 200 changed paths. Oversized requests, binary files, LFS pointers, and submodules fail explicitly; content is never silently truncated. Each request has a 30-second deadline covering every attempt, with one retry on a rate limit or a server fault inside that deadline.
 
 The selected diff or description goes to TypeSafe, through OpenRouter by default. Read [SECURITY.md](SECURITY.md) before pointing this at private code or wiring secrets into fork workflows.
 
