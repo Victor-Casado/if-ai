@@ -25,20 +25,22 @@ jobs:
           - name: tests
             min-confidence: '0.90'
             condition: >-
-              This change does not remove or weaken existing tests. Replacing a
-              test with an equivalent or stronger test is acceptable.
+              No existing test is deleted or weakened by this change. Replacing a
+              test with an equivalent or stronger test satisfies this condition.
+              A change that modifies no test file satisfies this condition.
           - name: docs
             min-confidence: '0.85'
             condition: >-
-              If this change alters the Action's inputs or outputs in action.yml,
-              then the README, docs/reference.md, and the examples are updated in
-              the same change. Changes that do not touch inputs or outputs satisfy
-              this condition.
+              Every input or output this change adds, removes, or renames in
+              action.yml is also reflected in README.md, docs/reference.md, and
+              the examples. A change that modifies no input or output in
+              action.yml satisfies this condition.
           - name: secrets
             min-confidence: '0.90'
             condition: >-
-              No code added in this change logs an API key, request content, or a
-              raw provider error response.
+              No line added by this change writes an API key, evaluated request
+              content, or a raw provider error response to a log or a job summary.
+              A change that adds no logging satisfies this condition.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -68,7 +70,9 @@ jobs:
       - uses: ./
         with:
           condition: >-
-            The description explains the behavior this change alters and why.
+            The description explains the behavior this change alters and why it
+            changes. A description that states the change is documentation only,
+            and says what the documentation now says, satisfies this condition.
           min-confidence: '0.85'
           mode: pr-body
           api-key: ${{ secrets.OPENROUTER_API_KEY }}
