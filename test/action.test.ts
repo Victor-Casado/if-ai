@@ -24,8 +24,8 @@ async function run(body: string, mockResponse = '', threshold = '0.85', mode = '
     git('commit', '--allow-empty', '-m', 'base');
     base = git('rev-parse', 'HEAD');
     await writeFile(join(dir, 'good.txt'), 'The condition is met.');
-    await writeFile(join(dir, 'bad.txt'), 'FAIL_CONDITION');
-    git('add', 'good.txt', 'bad.txt');
+    await writeFile(join(dir, 'Entire PR diff'), 'FAIL_CONDITION');
+    git('add', 'good.txt', 'Entire PR diff');
     git('commit', '-m', 'head');
     head = git('rev-parse', 'HEAD');
   }
@@ -81,9 +81,9 @@ it('fails with initialized outputs when a required confidence is missing', async
 it('reports the failing file through the actual per-file bundle', async () => {
   const result = await run('', '', '0.85', 'per-file');
   expect(result.code).toBe(1);
-  expect(JSON.parse(result.values['failed-files']!)).toEqual(['bad.txt']);
+  expect(JSON.parse(result.values['failed-files']!)).toEqual(['Entire PR diff']);
   expect(JSON.parse(result.values.results!)).toEqual([
-    { name: 'bad.txt', status: 'condition-false', confidence: 0.95 },
+    { name: 'Entire PR diff', status: 'condition-false', confidence: 0.95 },
     { name: 'good.txt', status: 'passed', confidence: 0.95 },
   ]);
 });

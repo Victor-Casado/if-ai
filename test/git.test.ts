@@ -105,3 +105,14 @@ it('does not let Git ignore settings hide submodule changes', async () => {
   const result = await collectSubjects('per-file', { base, head, body: '' }, cwd);
   expect(result).toEqual([{ name: 'vendor', error: 'Submodule contents cannot be evaluated as a text diff.' }]);
 });
+
+it('rejects modified LFS pointers whose unchanged header is a context line', async () => {
+  const { cwd } = await repository();
+  const pointer = (oid: string) => `version https://git-lfs.github.com/spec/v1\noid sha256:${oid}\nsize 100\n`;
+  await writeFile(join(cwd, 'asset.dat'), pointer('a'.repeat(64)));
+  const base = commit(cwd);
+  await writeFile(join(cwd, 'asset.dat'), pointer('b'.repeat(64)));
+  const head = commit(cwd);
+  const result = await collectSubjects('per-file', { base, head, body: '' }, cwd);
+  expect(result[0]?.error).toContain('LFS');
+});

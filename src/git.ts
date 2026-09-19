@@ -49,7 +49,7 @@ export async function collectSubjects(mode: Mode, pr: PullRequest, cwd: string):
       if (stat.startsWith('-\t-\t')) throw new ActionError('Binary content cannot be evaluated as a text diff.');
       const patch = await git(cwd, ['diff', ...flags, '--unified=3', '--src-prefix=a/', '--dst-prefix=b/', mergeBase, pr.head, '--', name]);
       if (patch.includes('\0')) throw new ActionError('Non-text content cannot be evaluated.');
-      if (/^[+-]version https:\/\/git-lfs.github.com\/spec\/v1\r?$/m.test(patch)) {
+      if (/^[ +\-]version https:\/\/git-lfs.github.com\/spec\/v1\r?$/m.test(patch)) {
         throw new ActionError('Git LFS pointers do not contain the changed file contents.');
       }
       if (!patch.trim()) throw new ActionError('Git did not return a patch for this changed file.');

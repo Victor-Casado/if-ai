@@ -28,8 +28,9 @@ async function main(): Promise<void> {
   core.setOutput('result', String(result.result));
   core.setOutput('confidence', String(result.confidence));
   core.setOutput('status', result.status);
-  core.setOutput('failed-files', JSON.stringify(config.mode === 'pr-body' ? [] : result.subjects
-    .filter(s => s.status !== 'passed' && s.name !== 'Entire PR diff').map(s => s.name)));
+  const hasFileResults = config.mode === 'per-file' || (config.mode === 'diff' && subjects.some(s => s.error));
+  core.setOutput('failed-files', JSON.stringify(hasFileResults ? result.subjects
+    .filter(s => s.status !== 'passed').map(s => s.name) : []));
   core.setOutput('results', JSON.stringify(result.subjects));
   if (process.env.GITHUB_STEP_SUMMARY) await core.summary.addRaw(summary(result, config.mode, config.minConfidence)).write();
   for (const subject of result.subjects.filter(s => s.status !== 'passed')) {

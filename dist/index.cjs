@@ -19550,7 +19550,7 @@ async function collectSubjects(mode, pr, cwd) {
       if (stat2.startsWith("-	-	")) throw new ActionError("Binary content cannot be evaluated as a text diff.");
       const patch = await git(cwd, ["diff", ...flags, "--unified=3", "--src-prefix=a/", "--dst-prefix=b/", mergeBase, pr.head, "--", name]);
       if (patch.includes("\0")) throw new ActionError("Non-text content cannot be evaluated.");
-      if (/^[+-]version https:\/\/git-lfs.github.com\/spec\/v1\r?$/m.test(patch)) {
+      if (/^[ +\-]version https:\/\/git-lfs.github.com\/spec\/v1\r?$/m.test(patch)) {
         throw new ActionError("Git LFS pointers do not contain the changed file contents.");
       }
       if (!patch.trim()) throw new ActionError("Git did not return a patch for this changed file.");
@@ -19712,7 +19712,8 @@ async function main() {
   setOutput("result", String(result.result));
   setOutput("confidence", String(result.confidence));
   setOutput("status", result.status);
-  setOutput("failed-files", JSON.stringify(config.mode === "pr-body" ? [] : result.subjects.filter((s) => s.status !== "passed" && s.name !== "Entire PR diff").map((s) => s.name)));
+  const hasFileResults = config.mode === "per-file" || config.mode === "diff" && subjects.some((s) => s.error);
+  setOutput("failed-files", JSON.stringify(hasFileResults ? result.subjects.filter((s) => s.status !== "passed").map((s) => s.name) : []));
   setOutput("results", JSON.stringify(result.subjects));
   if (process.env.GITHUB_STEP_SUMMARY) await summary.addRaw(summary2(result, config.mode, config.minConfidence)).write();
   for (const subject of result.subjects.filter((s) => s.status !== "passed")) {
