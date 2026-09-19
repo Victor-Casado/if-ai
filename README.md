@@ -8,7 +8,7 @@
 You keep leaving the same review comment. _Where's the test plan? You deleted that test._ Write the rule once as a workflow step, and every PR gets checked before a human opens it.
 
 ```yaml
-- uses: Victor-Casado/if-ai@v0.3.0
+- uses: Victor-Casado/if-ai@v0.3.1
   with:
     condition: This change does not remove or weaken existing tests.
     min-confidence: '0.90'
@@ -62,14 +62,17 @@ Rules a regex can check should stay a regex. if-ai is for the judgment calls you
 
 The step fails and the job summary names the files, so the contributor can fix it without waiting for you:
 
- ## if-ai: failed
+> **if-ai: failed**
+>
+> Mode: per-file. Minimum confidence: 0.85. Every subject must pass.
+>
+> | Subject               | Result          | Confidence | Details |
+> | --------------------- | --------------- | ---------- | ------- |
+> | `src/auth/session.ts` | condition-false | 0.93       |         |
+> | `src/api/client.ts`   | low-confidence  | 0.71       |         |
+> | `src/api/types.ts`    | passed          | 0.97       |         |
 
- Mode: per-file. Minimum confidence: 0.85. Every subject must pass.
-
- | Subject               | Result          | Confidence |
- | --------------------- | --------------- | ---------- |
- | `src/auth/session.ts` | condition-false | 0.93       |
- | `src/api/client.ts`   | passed          | 0.97       |
+Details stays empty while the model answers. It carries the sanitized reason when a subject cannot be evaluated at all, such as `Git LFS pointers do not contain the changed file contents.`, and that subject's confidence reads `Unavailable`.
 
 The same values come back as step outputs: `result`, `confidence`, `status`, `failed-files`, and a `results` array. GitHub Actions outputs are strings, so compare `result` with `'true'` explicitly.
 
@@ -98,7 +101,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: Victor-Casado/if-ai@v0.3.0
+      - uses: Victor-Casado/if-ai@v0.3.1
         id: policy
         with:
           condition: This change does not remove or weaken existing tests.
