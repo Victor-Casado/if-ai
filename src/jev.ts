@@ -1,8 +1,11 @@
-import { ActionError, record, type Config } from './config.js';
+import { ActionError, record, type Config, type Provider } from './config.js';
 
 export const MAX_REQUEST_BYTES = 28_000;
 export const REQUEST_TIMEOUT_MS = 30_000;
-const ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
+const ENDPOINTS = {
+  typesafe: 'https://api.typesafe.ai/v1/systemone',
+  openrouter: 'https://openrouter.ai/api/alpha/decisions',
+};
 
 export interface Decision {
   value: boolean;
@@ -75,11 +78,13 @@ function isScore(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
 }
 
-function httpError(status: number): ActionError {
+function httpError(status: number, provider: Provider): ActionError {
+  const name = provider === 'openrouter' ? 'OpenRouter' : 'TypeSafe';
   let hint = 'Check the model and request limits.';
-  if (status === 401 || status === 403) hint = 'Check your TypeSafe API key and access.';
-  else if (status === 429) hint = 'TypeSafe rate limit reached; rerun later.';
-  else if (status >= 500) hint = 'TypeSafe is unavailable; rerun later.';
+  if (status === 401 || status === 403) hint = `Check your ${name} API key and access.`;
+  else if (status === 402) hint = `Check your ${name} credits and spending limit.`;
+  else if (status === 429) hint = `${name} rate limit reached; rerun later.`;
+  else if (status >= 500) hint = `${name} is unavailable; rerun later.`;
   return new ActionError(`Jev request failed (HTTP ${status}). ${hint}`);
 }
 
@@ -91,7 +96,7 @@ export async function evaluate(
   const body = requestBody(config, content);
   const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
   try {
-    const response = await fetcher(ENDPOINT, {
+    const response = await fetcher(ENDPOINTS[config.provider], {
       method: 'POST',
       headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
       body,
@@ -100,7 +105,7 @@ export async function evaluate(
     });
     if (!response.ok) {
       await response.body?.cancel();
-      throw httpError(response.status);
+      throw httpError(response.status, config.provider);
     }
     // Bound the response too; never print provider bodies, which may echo source or secrets.
     const reader = response.body?.getReader();

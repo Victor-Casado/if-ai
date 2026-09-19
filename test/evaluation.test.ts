@@ -4,11 +4,12 @@ import { checkSubjects } from '../src/check.js';
 import { evaluate, parseDecision, requestBody } from '../src/jev.js';
 import { summary } from '../src/report.js';
 
-const config: Config = {
+const baseConfig: Config = {
   condition: 'The change is documented.',
   minConfidence: 0.85,
   mode: 'diff',
   apiKey: 'secret-value',
+  provider: 'typesafe',
   model: 'jev-1.13.0',
 };
 const response = (choice = 'true', confidence = 0.9) => ({
@@ -48,9 +49,28 @@ describe('inputs', () => {
       readPullRequest('pull_request', { pull_request: { base: { sha: '--help' } } }),
     ).toThrow();
   });
+  it('selects provider-specific defaults and preserves explicit model identifiers', () => {
+    const read = (extra: Record<string, string>) =>
+      readConfig((n) => ({ ...inputs, ...extra })[n] || '');
+    expect(read({})).toMatchObject({ provider: 'typesafe', model: 'jev-1.13.0' });
+    expect(read({ provider: 'openrouter' })).toMatchObject({
+      provider: 'openrouter',
+      model: 'typesafe/jev-1.13',
+    });
+    expect(read({ provider: 'openrouter', model: '~typesafe/jev-latest' }).model).toBe(
+      '~typesafe/jev-latest',
+    );
+    expect(() => read({ provider: 'other' })).toThrow('provider must be');
+    expect(() => read({ model: 'model\nInjected' })).toThrow('Invalid model');
+  });
 });
 
-describe('Jev', () => {
+describe.each(['typesafe', 'openrouter'] as const)('Jev via %s', (provider) => {
+  const config: Config = {
+    ...baseConfig,
+    provider,
+    model: provider === 'openrouter' ? 'typesafe/jev-1.13' : baseConfig.model,
+  };
   it('uses the documented Choice contract, not a made-up Noul confidence', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json(response()));
     expect(await evaluate(config, 'complete diff', fetcher)).toEqual({
@@ -58,9 +78,15 @@ describe('Jev', () => {
       confidence: 0.9,
     });
     const [url, options] = fetcher.mock.calls[0]!;
-    expect(url).toBe('https://api.typesafe.ai/v1/systemone');
+    expect(url).toBe(
+      provider === 'openrouter'
+        ? 'https://openrouter.ai/api/alpha/decisions'
+        : 'https://api.typesafe.ai/v1/systemone',
+    );
     expect(options?.redirect).toBe('error');
+    expect(options?.headers).toMatchObject({ Authorization: 'Bearer secret-value' });
     expect(JSON.parse(String(options?.body))).toMatchObject({
+      model: config.model,
       state: 'complete diff',
       questions: { condition: { type: 'choice' } },
     });
@@ -77,12 +103,20 @@ describe('Jev', () => {
   ])('rejects malformed decisions', (value) => {
     expect(() => parseDecision(value)).toThrow(ActionError);
   });
-  it.each([401, 403, 422, 429, 500, 529])('sanitizes HTTP %s errors', async (status) => {
+  it.each([401, 402, 403, 422, 429, 500, 529])('sanitizes HTTP %s errors', async (status) => {
     const fetcher = vi
       .fn<typeof fetch>()
       .mockResolvedValue(new Response('secret-value and private code', { status }));
     await expect(evaluate(config, 'private code', fetcher)).rejects.toThrow(`HTTP ${status}`);
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it('names the selected provider when credits are exhausted', async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response('private billing details', { status: 402 }));
+    await expect(evaluate(config, 'diff', fetcher)).rejects.toThrow(
+      `Check your ${provider === 'openrouter' ? 'OpenRouter' : 'TypeSafe'} credits and spending limit.`,
+    );
   });
   it('handles malformed JSON and network errors without leaking content', async () => {
     await expect(
