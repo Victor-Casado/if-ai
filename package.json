@@ -1,6 +1,6 @@
 {
   "name": "if-ai",
-  "version": "0.3.2",
+  "version": "1.0.1",
   "private": true,
   "description": "Plain-English pull request checks powered by Jev",
   "license": "MIT",
