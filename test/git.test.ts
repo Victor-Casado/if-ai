@@ -288,3 +288,21 @@ it('honors a lowered max-file-bytes budget', async () => {
   const [ample] = await collectSubjects('diff', pr, cwd, { ...budget(), maxFileBytes: 100_000 });
   expect(ample!.error).toBeUndefined();
 });
+
+it('keeps the change list readable when max-file-bytes is small', async () => {
+  const { cwd, base } = await repository();
+  // Enough paths that the raw change list alone exceeds a tiny file budget.
+  for (let i = 0; i < 60; i++)
+    await writeFile(join(cwd, `some-fairly-long-file-name-${i}.txt`), 'change\n');
+  const head = commit(cwd);
+  const pr = { body: '', base, head };
+  const subjects = await collectSubjects('per-file', pr, cwd, {
+    ...budget(),
+    maxFileBytes: 200,
+    maxFiles: 500,
+  });
+  // Metadata has its own ceiling, so the list is read and each patch is judged
+  // on its own rather than the whole run failing before it starts.
+  expect(subjects).toHaveLength(60);
+  expect(subjects.some((subject) => subject.error?.includes('change list'))).toBe(false);
+});

@@ -105,6 +105,10 @@ describe('inputs', () => {
     expect(() => read({ 'timeout-seconds': '0' })).toThrow('must be 1 or greater');
     expect(() => read({ retries: '-1' })).toThrow('whole number');
     expect(() => read({ 'max-files': '1.5' })).toThrow('whole number');
+    // Above 2^31 ms AbortSignal.timeout collapses to a 1 ms timer, so a huge
+    // timeout would fire instantly rather than never.
+    expect(read({ 'timeout-seconds': '2147483' }).timeoutMs).toBe(2_147_483_000);
+    expect(() => read({ 'timeout-seconds': '2147484' })).toThrow('2147483 or fewer');
   });
   it('selects provider-specific defaults and preserves explicit model identifiers', () => {
     const read = (extra: Record<string, string>) =>

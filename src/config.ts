@@ -29,13 +29,25 @@ export const DEFAULTS = {
 // Only errors deliberately written by us may reach CI logs.
 export class ActionError extends Error {}
 
-function positiveInteger(raw: string, name: string, fallback: number, minimum = 1): number {
+// AbortSignal.timeout collapses a delay above 2^31 ms to a 1 ms timer and
+// throws above 2^32, so an unbounded timeout-seconds would time out instantly
+// or crash. Cap it where the timer stays honest.
+const MAX_TIMEOUT_SECONDS = 2_147_483;
+
+function positiveInteger(
+  raw: string,
+  name: string,
+  fallback: number,
+  minimum = 1,
+  maximum = Number.MAX_SAFE_INTEGER,
+): number {
   const text = raw.trim();
   if (!text) return fallback;
   if (!/^\d+$/.test(text)) throw new ActionError(`${name} must be a whole number.`);
   const value = Number(text);
   if (!Number.isSafeInteger(value) || value < minimum)
     throw new ActionError(`${name} must be ${minimum} or greater.`);
+  if (value > maximum) throw new ActionError(`${name} must be ${maximum} or fewer.`);
   return value;
 }
 
@@ -78,6 +90,8 @@ export function readConfig(input: (name: string) => string): Config {
     input('timeout-seconds'),
     'timeout-seconds',
     DEFAULTS.timeoutSeconds,
+    1,
+    MAX_TIMEOUT_SECONDS,
   );
   return {
     condition,

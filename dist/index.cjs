@@ -19469,13 +19469,15 @@ var DEFAULTS = {
 };
 var ActionError = class extends Error {
 };
-function positiveInteger(raw, name, fallback, minimum = 1) {
+var MAX_TIMEOUT_SECONDS = 2147483;
+function positiveInteger(raw, name, fallback, minimum = 1, maximum = Number.MAX_SAFE_INTEGER) {
   const text = raw.trim();
   if (!text) return fallback;
   if (!/^\d+$/.test(text)) throw new ActionError(`${name} must be a whole number.`);
   const value = Number(text);
   if (!Number.isSafeInteger(value) || value < minimum)
     throw new ActionError(`${name} must be ${minimum} or greater.`);
+  if (value > maximum) throw new ActionError(`${name} must be ${maximum} or fewer.`);
   return value;
 }
 function readConfig(input) {
@@ -19506,7 +19508,9 @@ function readConfig(input) {
   const timeoutSeconds = positiveInteger(
     input("timeout-seconds"),
     "timeout-seconds",
-    DEFAULTS.timeoutSeconds
+    DEFAULTS.timeoutSeconds,
+    1,
+    MAX_TIMEOUT_SECONDS
   );
   return {
     condition,
@@ -19553,6 +19557,7 @@ function safeError(error2) {
 var import_node_child_process = require("node:child_process");
 var import_node_util = require("node:util");
 var exec = (0, import_node_util.promisify)(import_node_child_process.execFile);
+var METADATA_OUTPUT_BYTES = 2e6;
 var flags = [
   "--no-ext-diff",
   "--no-textconv",
@@ -19560,12 +19565,12 @@ var flags = [
   "--no-renames",
   "--ignore-submodules=none"
 ];
-async function git(cwd, args, maxFileBytes) {
+async function git(cwd, args, maxBytes, oversize) {
   try {
     const { stdout } = await exec("git", ["--no-literal-pathspecs", ...args], {
       cwd,
       encoding: "buffer",
-      maxBuffer: maxFileBytes,
+      maxBuffer: maxBytes,
       timeout: 3e4,
       windowsHide: true,
       env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" }
@@ -19573,9 +19578,7 @@ async function git(cwd, args, maxFileBytes) {
     return new TextDecoder("utf-8", { fatal: true }).decode(stdout);
   } catch (error2) {
     if (error2?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
-      throw new ActionError(
-        `One file's diff is larger than the ${maxFileBytes}-byte max-file-bytes budget. Nothing was truncated. Raise max-file-bytes, exclude that file with paths, or split the change.`
-      );
+      throw new ActionError(oversize(maxBytes));
     }
     throw new ActionError(
       "Cannot read the complete Git diff. Use actions/checkout with fetch-depth: 0 and ensure both event commits exist. Git output must be UTF-8."
@@ -19584,24 +19587,43 @@ async function git(cwd, args, maxFileBytes) {
 }
 async function collectSubjects(mode, pr, cwd, budget) {
   const { paths, maxFiles, maxFileBytes } = budget;
-  const run = (args) => git(cwd, args, maxFileBytes);
+  const metadata = (args) => git(
+    cwd,
+    args,
+    Math.max(METADATA_OUTPUT_BYTES, maxFileBytes),
+    (limit) => `This pull request's change list is larger than ${limit} bytes, which is more than the Action can read. Nothing was truncated. Scope the rule with paths, or split the change.`
+  );
+  const patch = (args) => git(
+    cwd,
+    args,
+    maxFileBytes,
+    (limit) => `One file's diff is larger than the ${limit}-byte max-file-bytes budget. Nothing was truncated. Raise max-file-bytes, exclude that file with paths, or split the change.`
+  );
   if (mode === "pr-body") {
     if (!pr.body.trim())
       throw new ActionError("The PR body is empty. Add a description before running this check.");
     return [{ name: "PR body", content: pr.body }];
   }
-  const shallow = (await run(["rev-parse", "--is-shallow-repository"])).trim();
+  const shallow = (await metadata(["rev-parse", "--is-shallow-repository"])).trim();
   if (shallow !== "false")
     throw new ActionError("A full-history checkout is required. Set fetch-depth: 0.");
-  const mergeBase = (await run(["merge-base", pr.base, pr.head])).trim();
+  const mergeBase = (await metadata(["merge-base", pr.base, pr.head])).trim();
   if (!/^[a-f0-9]{40}$/.test(mergeBase))
     throw new ActionError("Cannot determine the PR merge base.");
-  const raw = await run(["diff", ...flags, "--raw", "-z", mergeBase, pr.head, "--", ...paths]);
+  const raw = await metadata(["diff", ...flags, "--raw", "-z", mergeBase, pr.head, "--", ...paths]);
   const fields = raw.split("\0");
   if (fields.pop() !== "") throw new ActionError("Invalid Git change list.");
   if (fields.length === 0) {
     if (paths.length > 0) {
-      const unfiltered = await run(["diff", ...flags, "--raw", "-z", mergeBase, pr.head, "--"]);
+      const unfiltered = await metadata([
+        "diff",
+        ...flags,
+        "--raw",
+        "-z",
+        mergeBase,
+        pr.head,
+        "--"
+      ]);
       if (unfiltered !== "") return [];
     }
     throw new ActionError("The PR has no changed files to evaluate.");
@@ -19622,7 +19644,7 @@ async function collectSubjects(mode, pr, cwd, budget) {
       if (/^:(?:160000 |\d{6} 160000 )/.test(meta))
         throw new ActionError("Submodule contents cannot be evaluated as a text diff.");
       const pathspec = [`:(top,literal)${name}`, `:(top,exclude,literal)${name}/`];
-      const stat2 = await run([
+      const stat2 = await metadata([
         "diff",
         ...flags,
         "--numstat",
@@ -19634,7 +19656,7 @@ async function collectSubjects(mode, pr, cwd, budget) {
       ]);
       if (stat2.startsWith("-	-	"))
         throw new ActionError("Binary content cannot be evaluated as a text diff.");
-      const patch = await run([
+      const filePatch = await patch([
         "diff",
         ...flags,
         "--unified=3",
@@ -19645,12 +19667,13 @@ async function collectSubjects(mode, pr, cwd, budget) {
         "--",
         ...pathspec
       ]);
-      if (patch.includes("\0")) throw new ActionError("Non-text content cannot be evaluated.");
-      if (/^[ +\-]version https:\/\/git-lfs.github.com\/spec\/v1\r?$/m.test(patch)) {
+      if (filePatch.includes("\0")) throw new ActionError("Non-text content cannot be evaluated.");
+      if (/^[ +\-]version https:\/\/git-lfs.github.com\/spec\/v1\r?$/m.test(filePatch)) {
         throw new ActionError("Git LFS pointers do not contain the changed file contents.");
       }
-      if (!patch.trim()) throw new ActionError("Git did not return a patch for this changed file.");
-      subjects.push({ name, content: patch });
+      if (!filePatch.trim())
+        throw new ActionError("Git did not return a patch for this changed file.");
+      subjects.push({ name, content: filePatch });
     } catch (error2) {
       if (!(error2 instanceof ActionError)) throw error2;
       subjects.push({ name, error: error2.message });
