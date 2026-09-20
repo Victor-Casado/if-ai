@@ -237,12 +237,24 @@ describe.each(['typesafe', 'openrouter'] as const)('Jev via %s', (provider) => {
     const controller = new AbortController();
     const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal);
     try {
-      const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => {
-        // Headers arrive, then the deadline expires while the body is read.
-        controller.abort();
-        return new Response('{}', { status: 400 });
-      });
-      const error = await failure(fetcher);
+      // Headers arrive, then the deadline expires inside errorKind's read.
+      const stalled = new Response(
+        new ReadableStream({
+          start(stream) {
+            controller.signal.addEventListener('abort', () => stream.error(new Error('aborted')), {
+              once: true,
+            });
+          },
+          pull() {
+            controller.abort();
+            return new Promise<void>(() => {});
+          },
+        }),
+        { status: 400 },
+      );
+      const error = await failure(vi.fn<typeof fetch>().mockResolvedValue(stalled));
+      // Both providers touch the body, one to inspect it and one to discard it,
+      // and an expired deadline is the cause worth reporting either way.
       expect(error.message).toContain('timed out after 30 seconds');
       expect(error.message).not.toContain('HTTP 400');
     } finally {
