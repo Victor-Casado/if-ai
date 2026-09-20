@@ -48,6 +48,12 @@ Done. Open a PR that guts a test and watch it go red.
 
 Change the `condition:` line to whatever you actually care about. That line is the product.
 
+The tag above is readable; a tag is also movable. This step receives your API key, so pin it once you are past trying it out:
+
+```yaml
+- uses: Victor-Casado/if-ai@6e5a7d70f91c2ee24078638d62532e035a58a718 # v1.1.0
+```
+
 ## Rules people write
 
 | Rule                                                                                                          | `mode`     |
