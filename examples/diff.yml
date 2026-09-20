@@ -15,7 +15,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: Victor-Casado/if-ai@v1.1.0
+      - uses: Victor-Casado/if-ai@v1.2.0
         with:
           mode: diff
           condition: This change does not remove or weaken existing tests. Replacing a test with an equivalent or stronger test is acceptable.
