@@ -19787,11 +19787,9 @@ async function evaluate(config, content, fetcher = fetch, onRetry = () => {
       if (!response.ok) {
         const delay = retryDelayMs(response.headers.get("retry-after"));
         if (lastAttempt || !isRetryableStatus(response.status) || delay > MAX_RETRY_DELAY_MS || delay >= remainingMs()) {
-          throw httpError(
-            response.status,
-            config.provider,
-            await errorKind(response, config.provider)
-          );
+          const kind = await errorKind(response, config.provider);
+          if (signal.aborted) throw new ActionError(TIMEOUT_MESSAGE);
+          throw httpError(response.status, config.provider, kind);
         }
         await response.body?.cancel();
         onRetry(response.status, delay);

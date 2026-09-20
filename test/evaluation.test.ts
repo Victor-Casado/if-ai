@@ -233,6 +233,22 @@ describe.each(['typesafe', 'openrouter'] as const)('Jev via %s', (provider) => {
       expect(error.message).toContain('rejected the request as malformed');
     }
   });
+  it('reports a timeout when inspecting the error body outlasts the deadline', async () => {
+    const controller = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal);
+    try {
+      const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => {
+        // Headers arrive, then the deadline expires while the body is read.
+        controller.abort();
+        return new Response('{}', { status: 400 });
+      });
+      const error = await failure(fetcher);
+      expect(error.message).toContain('timed out after 30 seconds');
+      expect(error.message).not.toContain('HTTP 400');
+    } finally {
+      timeout.mockRestore();
+    }
+  });
   it('does not classify an error body that merely quotes the marker', async () => {
     // An error can echo the diff, and a diff of this repository contains the
     // marker as source. Only the structured field may classify.

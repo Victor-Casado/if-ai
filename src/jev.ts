@@ -213,11 +213,12 @@ export async function evaluate(
           delay >= remainingMs()
         ) {
           // Only on the failing path; a retry discards the body instead.
-          throw httpError(
-            response.status,
-            config.provider,
-            await errorKind(response, config.provider),
-          );
+          const kind = await errorKind(response, config.provider);
+          // Reading the body can be what exhausts the deadline. errorKind
+          // swallows that abort, so check before reporting a status that would
+          // name the wrong cause.
+          if (signal.aborted) throw new ActionError(TIMEOUT_MESSAGE);
+          throw httpError(response.status, config.provider, kind);
         }
         await response.body?.cancel();
         onRetry(response.status, delay);
