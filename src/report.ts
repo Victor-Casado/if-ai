@@ -7,6 +7,16 @@ export function escapeHtml(text: string): string {
   );
 }
 
+export function skippedSummary(mode: string, paths: string[]): string {
+  return [
+    '<h2>if-ai: skipped</h2>',
+    `<p>Mode: ${escapeHtml(mode)}. No changed file matched the configured paths, so the condition does not apply to this pull request and Jev was not called.</p>`,
+    '<p>Paths:</p>',
+    `<ul>${paths.map((path) => `<li><code>${escapeHtml(path)}</code></li>`).join('')}</ul>`,
+    '',
+  ].join('\n');
+}
+
 export function summary(result: CheckResult, mode: string, minConfidence: number): string {
   const rows = result.subjects
     .map((subject) => {

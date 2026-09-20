@@ -172,3 +172,46 @@ it.each(['file-to-directory', 'directory-to-file'])(
     expect(combined[0]?.content?.match(/^diff --git /gm)).toHaveLength(2);
   },
 );
+
+it('limits diff and per-file evaluation to matching pathspecs', async () => {
+  const { cwd, base } = await repository();
+  await mkdir(join(cwd, 'src'), { recursive: true });
+  await mkdir(join(cwd, '.github/workflows'), { recursive: true });
+  await writeFile(join(cwd, 'src/handler.ts'), 'export const handled = true;\n');
+  await writeFile(join(cwd, '.github/workflows/rules.yml'), 'name: rules\n');
+  await writeFile(join(cwd, 'README.md'), 'docs\n');
+  const head = commit(cwd);
+  const pr = { body: '', base, head };
+
+  const scoped = await collectSubjects('per-file', pr, cwd, ['src/**']);
+  expect(scoped.map((subject) => subject.name)).toEqual(['src/handler.ts']);
+
+  const excluded = await collectSubjects('per-file', pr, cwd, [':(exclude).github/**']);
+  expect(excluded.map((subject) => subject.name)).not.toContain('.github/workflows/rules.yml');
+
+  const combined = await collectSubjects('diff', pr, cwd, ['src/**', 'README.md']);
+  expect(combined).toHaveLength(1);
+  expect(combined[0]!.content).toContain('src/handler.ts');
+  expect(combined[0]!.content).not.toContain('rules.yml');
+});
+
+it('treats a filter that matches nothing as not applicable, but an empty PR as an error', async () => {
+  const { cwd, base } = await repository();
+  await writeFile(join(cwd, 'README.md'), 'docs only\n');
+  const head = commit(cwd);
+  const pr = { body: '', base, head };
+
+  expect(await collectSubjects('diff', pr, cwd, ['src/**'])).toEqual([]);
+  expect(await collectSubjects('per-file', pr, cwd, ['src/**'])).toEqual([]);
+  await expect(collectSubjects('diff', pr, cwd, [])).resolves.toHaveLength(1);
+  await expect(collectSubjects('diff', { body: '', base, head: base }, cwd, [])).rejects.toThrow(
+    'no changed files',
+  );
+  // A filter must not disguise an empty comparison as a rule that does not apply.
+  await expect(
+    collectSubjects('diff', { body: '', base, head: base }, cwd, ['src/**']),
+  ).rejects.toThrow('no changed files');
+  await expect(
+    collectSubjects('per-file', { body: '', base, head: base }, cwd, ['src/**']),
+  ).rejects.toThrow('no changed files');
+});

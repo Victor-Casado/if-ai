@@ -10,6 +10,22 @@ if-ai runs as a step in a GitHub Actions workflow on a `pull_request` or `pull_r
 | `diff`     | All text changes in one request                         | Conditions involving related changes across files        |
 | `per-file` | One file patch per request, up to four requests at once | A rule that each changed file must satisfy independently |
 
+## Scoping a rule with `paths`
+
+`paths` takes [Git pathspecs](https://git-scm.com/docs/gitglossary#Documentation/gitglossary.txt-aiddefpathspecapathspec), one per line, and filters the changed files before anything is evaluated. Globs and exclusions both work, because pathspec magic is enabled:
+
+```yaml
+paths: |
+  src/**
+  :(exclude)src/**/*.test.ts
+```
+
+Filtering happens before the 200-file limit, so a large pull request scoped to a few files is evaluated rather than rejected. In `per-file` mode this is also the cost control: one paid call per matching file instead of one per changed file.
+
+A rule scoped to `src/**` does not apply to a documentation-only pull request. That run reports `skipped` and passes, rather than asking the model to reason about a diff containing no relevant evidence.
+
+Up to 50 entries, each 200 UTF-8 bytes or fewer. Entries are passed to Git after `--`, so a leading dash is a path and never an option.
+
 `diff` is the default. Diff modes require a full-history checkout containing the PR event's base and head commits. The comparison runs from their merge base to the exact head commit. It includes every change hunk and three context lines, not every line of the repository. No paths are filtered out. Renames appear as a deletion and an addition.
 
 Per-file evaluations cannot see other files. PR-body mode checks the description, not whether the implementation matches it.
@@ -23,6 +39,7 @@ Per-file evaluations cannot see other files. PR-body mode checks the description
 | `api-key`        | Yes      | Key for the selected provider, supplied as a secret.                                                                   |
 | `provider`       | No       | `typesafe` or `openrouter`. Defaults to `openrouter`.                                                                  |
 | `mode`           | No       | `pr-body`, `diff`, or `per-file`. Defaults to `diff`.                                                                  |
+| `paths`          | No       | Git pathspecs, one per line, limiting which changed files are evaluated. Ignored in `pr-body` mode.                    |
 | `model`          | No       | Defaults to `jev-1.13.0` for TypeSafe or `typesafe/jev-1.13` for OpenRouter. Use the selected provider's Jev model ID. |
 
 For per-file rules, say how unrelated files should be treated. For example: "Any new user-facing error message explains how to recover. Changes without error messages satisfy this condition."
@@ -31,11 +48,12 @@ Try your rule against representative PRs before making the job required. Use det
 
 ## Results
 
-| Outcome                                      | `result`  | `status` | Check |
-| -------------------------------------------- | --------- | -------- | ----- |
-| Every answer is true and meets the threshold | `'true'`  | `passed` | Pass  |
-| Any answer is false or below the threshold   | `'false'` | `failed` | Fail  |
-| Input, Git, network, or API error            | `'false'` | `error`  | Fail  |
+| Outcome                                      | `result`  | `status`  | Check |
+| -------------------------------------------- | --------- | --------- | ----- |
+| Every answer is true and meets the threshold | `'true'`  | `passed`  | Pass  |
+| No changed file matched `paths`              | `'true'`  | `skipped` | Pass  |
+| Any answer is false or below the threshold   | `'false'` | `failed`  | Fail  |
+| Input, Git, network, or API error            | `'false'` | `error`   | Fail  |
 
 An empty body or diff is an error. Confidence equal to the threshold passes.
 
@@ -48,6 +66,8 @@ Outputs are strings in GitHub Actions:
 | `status`       | `passed`, `failed`, or `error`.                                                                              |
 | `failed-files` | JSON array of failed paths in per-file mode, or unreadable paths in diff mode. Empty for aggregate verdicts. |
 | `results`      | JSON array of `name`, `status`, `confidence`, and optional sanitized `error` for each evaluation.            |
+
+A `skipped` run calls no API and costs nothing. It reports `confidence: '1'` and an empty `results` array: an empty conjunction is true, and nothing was uncertain because nothing was evaluated. Read `status` before reading `confidence`.
 
 Individual statuses are `passed`, `condition-false`, `low-confidence`, or `error`. An individual error has `confidence: null`. Validation failures before evaluation leave the arrays empty.
 

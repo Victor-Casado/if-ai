@@ -35,6 +35,7 @@ export async function collectSubjects(
   mode: Mode,
   pr: PullRequest,
   cwd: string,
+  paths: string[] = [],
 ): Promise<Subject[]> {
   if (mode === 'pr-body') {
     if (!pr.body.trim())
@@ -47,10 +48,27 @@ export async function collectSubjects(
   const mergeBase = (await git(cwd, ['merge-base', pr.base, pr.head])).trim();
   if (!/^[a-f0-9]{40}$/.test(mergeBase))
     throw new ActionError('Cannot determine the PR merge base.');
-  const raw = await git(cwd, ['diff', ...flags, '--raw', '-z', mergeBase, pr.head, '--']);
+  const raw = await git(cwd, ['diff', ...flags, '--raw', '-z', mergeBase, pr.head, '--', ...paths]);
   const fields = raw.split('\0');
   if (fields.pop() !== '') throw new ActionError('Invalid Git change list.');
-  if (fields.length === 0) throw new ActionError('The PR has no changed files to evaluate.');
+  if (fields.length === 0) {
+    // A filter that matches nothing means the rule does not apply to this PR,
+    // which is an ordinary outcome. A PR with no changes at all is not, and a
+    // filter must not disguise one as the other, so ask again without it.
+    if (paths.length > 0) {
+      const unfiltered = await git(cwd, [
+        'diff',
+        ...flags,
+        '--raw',
+        '-z',
+        mergeBase,
+        pr.head,
+        '--',
+      ]);
+      if (unfiltered !== '') return [];
+    }
+    throw new ActionError('The PR has no changed files to evaluate.');
+  }
   if (fields.length % 2 !== 0 || fields.length / 2 > MAX_FILES) {
     throw new ActionError(
       'The PR exceeds the 200-file limit or Git returned an invalid change list. Split the PR; nothing was truncated.',
