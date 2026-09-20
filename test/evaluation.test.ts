@@ -194,6 +194,96 @@ describe.each(['typesafe', 'openrouter'] as const)('Jev via %s', (provider) => {
     await expect(evaluate(config, 'diff', fetcher)).rejects.toThrow('HTTP 429');
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
+  async function failure(fetcher: typeof fetch, content = 'private code'): Promise<Error> {
+    let caught: unknown;
+    try {
+      await evaluate(config, content, fetcher);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    return caught as Error;
+  }
+  it('explains a bad request, and never repeats the provider body', async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response('secret-value and private code', { status: 400 }));
+    const error = await failure(fetcher);
+    expect(error.message).toContain('HTTP 400');
+    expect(error.message).toContain('rejected the request as malformed');
+    expect(error.message).toContain('per-file');
+    expect(error.message).not.toContain('secret-value');
+    expect(error.message).not.toContain('private code');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it('recognizes an oversized request only where the provider reports one', async () => {
+    // The shape OpenRouter returned to scripts/probe-limits.mjs at 203 KB.
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ detail: { error_type: 'max_tokens_exceeded' } }), {
+        status: 400,
+      }),
+    );
+    const error = await failure(fetcher);
+    if (provider === 'openrouter') {
+      expect(error.message).toContain("larger than the model's context");
+      expect(error.message).toContain('paths');
+      expect(error.message).not.toContain('malformed');
+    } else {
+      // TypeSafe sends no body, so this shape is not its to claim.
+      expect(error.message).toContain('rejected the request as malformed');
+    }
+  });
+  it('reports a timeout when inspecting the error body outlasts the deadline', async () => {
+    const controller = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal);
+    try {
+      // Headers arrive, then the deadline expires inside errorKind's read.
+      const stalled = new Response(
+        new ReadableStream({
+          start(stream) {
+            controller.signal.addEventListener('abort', () => stream.error(new Error('aborted')), {
+              once: true,
+            });
+          },
+          pull() {
+            controller.abort();
+            return new Promise<void>(() => {});
+          },
+        }),
+        { status: 400 },
+      );
+      const error = await failure(vi.fn<typeof fetch>().mockResolvedValue(stalled));
+      // Both providers touch the body, one to inspect it and one to discard it,
+      // and an expired deadline is the cause worth reporting either way.
+      expect(error.message).toContain('timed out after 30 seconds');
+      expect(error.message).not.toContain('HTTP 400');
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+  it('does not classify an error body that merely quotes the marker', async () => {
+    // An error can echo the diff, and a diff of this repository contains the
+    // marker as source. Only the structured field may classify.
+    const echoed = "unrelated failure near +const MARKER = 'max_tokens_exceeded';";
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(echoed, { status: 400 }));
+    const error = await failure(fetcher);
+    expect(error.message).toContain('rejected the request as malformed');
+    // The general message names the same likely cause, so match the specific
+    // wording that only a classified response produces.
+    expect(error.message).not.toContain('The content is larger');
+  });
+  it('retains only a bounded prefix of an error body', async () => {
+    const huge = JSON.stringify({
+      padding: 'x'.repeat(200_000),
+      detail: { error_type: 'max_tokens_exceeded' },
+    });
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(huge, { status: 400 }));
+    const error = await failure(fetcher, 'diff');
+    // Truncated long before the field, so the JSON cannot parse and nothing is
+    // classified. A chunk larger than the limit must not be retained whole.
+    expect(error.message).toContain('rejected the request as malformed');
+    expect(error.message.length).toBeLessThan(400);
+  });
   it('names the selected provider when credits are exhausted', async () => {
     const fetcher = vi
       .fn<typeof fetch>()
