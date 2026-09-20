@@ -1,0 +1,35 @@
+name: if-ai description
+on:
+  pull_request:
+    # Unlike the diff rules, this one reads the description, so an edit is
+    # exactly what it should re-evaluate.
+    types: [opened, edited, reopened, synchronize]
+permissions:
+  contents: read
+concurrency:
+  group: if-ai-description-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  description:
+    name: if-ai (description)
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository
+      && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      # A shallow checkout, only to make the local Action available. pr-body
+      # mode reads the description from the event payload, not the repository.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./
+        with:
+          # Asking about "the behavior this change alters" failed at 0.12 on a
+          # version bump, which alters no behavior and said so. Asking what the
+          # change does has an answer for every pull request.
+          condition: >-
+            The description states what this change does and why it was made.
+          min-confidence: '0.85'
+          mode: pr-body
+          api-key: ${{ secrets.OPENROUTER_API_KEY }}

@@ -55,6 +55,14 @@ if-ai uses Jev's two-option Choice API to obtain native confidence. The minimum 
 
 Use `if: always()` on a later step to inspect outputs after failure. Pass outputs through environment variables when using them in shell commands.
 
+## Skipped jobs and required checks
+
+GitHub reports a job skipped by its `if` as the `skipped` conclusion, and counts that as satisfying a required status check. Two consequences are worth knowing before making an if-ai job required.
+
+A workflow that skips fork PRs leaves them unevaluated but green. That is the documented behavior of the same-repository pattern, not a defect, but it means the rule protects your own branches rather than contributions.
+
+More subtly, GitHub evaluates the most recent check run for each name on a commit. If a job runs on one event and skips on another for the same commit, the skip replaces the earlier verdict, including a failure. Guard against an event by leaving it out of the workflow's `types` rather than by skipping the job, so no run is created and nothing is superseded.
+
 ## Limits and privacy
 
 - Each request is limited to 28,000 UTF-8 bytes, including the condition and JSON framing. Oversized input fails without truncation. Per-file mode helps when each individual patch fits.
