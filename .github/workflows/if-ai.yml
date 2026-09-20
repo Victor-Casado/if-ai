@@ -1,7 +1,10 @@
 name: if-ai
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited]
+    # No edited: a body edit does not change the diff. Guarding that with a
+    # job-level if would instead publish a skipped check run that supersedes
+    # the real verdict for the same commit.
+    types: [opened, synchronize, reopened]
 permissions:
   contents: read
 concurrency:
@@ -9,15 +12,15 @@ concurrency:
   cancel-in-progress: true
 jobs:
   # Each rule is its own job rather than a matrix leg. A skipped matrix job
-  # renders its name before expansion, so fork, Dependabot, and edited events
-  # would show a check literally called "if-ai (${{ matrix.rule.name }})".
+  # renders its name before expansion, so a skipped run would show a check
+  # literally called "if-ai (${{ matrix.rule.name }})".
   tests:
     name: if-ai (tests)
     # Fork PRs receive no secrets, and Dependabot PRs are mechanical. Both are
-    # skipped rather than evaluated. Body edits do not change the diff.
+    # skipped rather than evaluated, consistently for every event on a given
+    # pull request, so no skip ever replaces a real verdict.
     if: >-
-      github.event.action != 'edited'
-      && github.event.pull_request.head.repo.full_name == github.repository
+      github.event.pull_request.head.repo.full_name == github.repository
       && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -43,8 +46,7 @@ jobs:
   secrets:
     name: if-ai (secrets)
     if: >-
-      github.event.action != 'edited'
-      && github.event.pull_request.head.repo.full_name == github.repository
+      github.event.pull_request.head.repo.full_name == github.repository
       && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -60,27 +62,4 @@ jobs:
             raw provider error response.
           min-confidence: '0.80'
           mode: diff
-          api-key: ${{ secrets.OPENROUTER_API_KEY }}
-  description:
-    name: if-ai (description)
-    if: >-
-      github.event.pull_request.head.repo.full_name == github.repository
-      && github.actor != 'dependabot[bot]'
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    steps:
-      # A shallow checkout, only to make the local Action available. pr-body
-      # mode reads the description from the event payload, not the repository.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./
-        with:
-          # Asking about "the behavior this change alters" failed at 0.12 on a
-          # version bump, which alters no behavior and said so. Asking what the
-          # change does has an answer for every pull request.
-          condition: >-
-            The description states what this change does and why it was made.
-          min-confidence: '0.85'
-          mode: pr-body
           api-key: ${{ secrets.OPENROUTER_API_KEY }}

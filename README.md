@@ -87,7 +87,8 @@ The same values come back as step outputs: `result`, `confidence`, `status`, `fa
 name: if-ai
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited]
+    # Add edited only for pr-body mode. A body edit cannot change the diff.
+    types: [opened, synchronize, reopened]
 permissions:
   contents: read
 jobs:
@@ -114,6 +115,8 @@ jobs:
 Run it on real PRs for a week before you make the `if-ai` job required. Pin the Action to a release's full commit SHA for an immutable install.
 
 This workflow skips fork PRs. For public contributions, use the [fork workflow](examples/fork-pr.yml) and configure its required-review environment so every paid run is approved. Dependabot needs its own secret configuration.
+
+A skipped job reports the `skipped` conclusion, which GitHub counts as satisfying a required status check. Making the `if-ai` job required therefore does not cover fork PRs under the workflow above: they are skipped, and the check passes without evaluating anything. Use the fork workflow if that gap matters to you.
 
 if-ai runs only as a step in a GitHub Actions workflow. There is no CLI, no library, no bot to install, and no if-ai account, server, or subscription. You bring an API key and you own the rule; the Action has no backend and no telemetry. OpenRouter is the default and runs `typesafe/jev-1.13` through its [alpha Decisions API](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-questions-and-answers-request); for a direct TypeSafe key, set `provider: typesafe`.
 
