@@ -223,9 +223,23 @@ it('reports an oversized pull request as too large, not as a broken checkout', a
   await writeFile(join(cwd, 'huge.txt'), 'x'.repeat(MAX_GIT_OUTPUT_BYTES + 100_000));
   const head = commit(cwd);
   const [subject] = await collectSubjects('diff', { body: '', base, head }, cwd);
-  expect(subject!.error).toContain('too large to evaluate');
-  expect(subject!.error).toContain('per-file');
+  expect(subject!.error).toContain('larger than the 2 MB this Action can read');
+  expect(subject!.error).toContain('paths');
   expect(subject!.error).not.toContain('fetch-depth');
+  // Per-file mode runs the same per-file command, so it must not be suggested.
+  expect(subject!.error).not.toContain('per-file');
+});
+
+it('bounds the largest single file, not the pull request', async () => {
+  const { cwd, base } = await repository();
+  const each = Math.floor(MAX_GIT_OUTPUT_BYTES * 0.45);
+  for (const name of ['a.txt', 'b.txt', 'c.txt'])
+    await writeFile(join(cwd, name), 'x'.repeat(each));
+  const head = commit(cwd);
+  const [subject] = await collectSubjects('diff', { body: '', base, head }, cwd);
+  // Comfortably over the per-command ceiling in total, under it per file.
+  expect(subject!.error).toBeUndefined();
+  expect(subject!.content!.length).toBeGreaterThan(MAX_GIT_OUTPUT_BYTES);
 });
 
 it('reads a pull request just under the output ceiling in full', async () => {

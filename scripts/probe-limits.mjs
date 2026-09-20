@@ -82,14 +82,22 @@ for (const size of sizes) {
     if (response.ok) {
       line += ' (accepted)';
     } else {
-      // Synthetic payload, so the provider cannot be echoing anything private.
-      let detail = text.slice(0, 300).replace(/\s+/g, ' ');
+      // The payload is synthetic filler, so a provider cannot echo anything
+      // private back. Even so, print only the fields needed to build the
+      // mapping rather than the response body: a raw body is exactly what
+      // src/jev.ts refuses to log, and this script should not model otherwise.
+      let code = 'none';
+      let message = 'unparsed';
       try {
-        const parsed = JSON.parse(text);
-        detail = JSON.stringify(parsed.error ?? parsed).slice(0, 300);
+        const error = JSON.parse(text).error ?? {};
+        code = String(error.code ?? error.type ?? 'none').slice(0, 60);
+        message = String(error.message ?? '')
+          .slice(0, 200)
+          .replace(/\s+/g, ' ');
       } catch {}
-      line += `\n            detail: ${detail}`;
-      const hint = /context|length|too large|too long|token|limit|size/i.exec(text);
+      const hint = /context|length|too large|too long|token|limit|size/i.exec(message);
+      line += `\n            code: ${code}`;
+      line += `\n            message: ${message}`;
       line += `\n            length signal: ${hint ? `yes (${hint[0]})` : 'no'}`;
     }
   } catch (error) {

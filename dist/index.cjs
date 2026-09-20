@@ -19544,7 +19544,7 @@ async function git(cwd, args) {
   } catch (error2) {
     if (error2?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
       throw new ActionError(
-        `This pull request is too large to evaluate: a single Git command produced more than ${MAX_GIT_OUTPUT_BYTES / 1e6} MB of output. Nothing was truncated. Use per-file mode, or scope the rule with paths.`
+        `One file's diff is larger than the ${MAX_GIT_OUTPUT_BYTES / 1e6} MB this Action can read. Nothing was truncated. Exclude that file with paths, or split the change.`
       );
     }
     throw new ActionError(

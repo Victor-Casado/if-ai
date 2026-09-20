@@ -6,8 +6,10 @@ import type { Subject } from './check.js';
 const exec = promisify(execFile);
 const MAX_FILES = 200;
 // Node buffers a child process's stdout in memory, so this is a hard ceiling on
-// what the Action can read at all, not a policy choice. Verified: a 1.9 MB diff
-// is read in full and a 2.1 MB diff is not.
+// what the Action can read at all, not a policy choice. It applies per command,
+// and each file's patch is its own command, so it bounds the largest single
+// file rather than the pull request. Verified: one 1.9 MB file is read in full,
+// one 2.1 MB file is not, and 2.7 MB spread over three files is fine.
 export const MAX_GIT_OUTPUT_BYTES = 2_000_000;
 const flags = [
   '--no-ext-diff',
@@ -31,8 +33,10 @@ async function git(cwd: string, args: string[]): Promise<string> {
   } catch (error) {
     // Too big to read and unable to read need different fixes, so say which.
     if ((error as { code?: string } | undefined)?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+      // Per-file mode is not a way out: it runs the same per-file command and
+      // records the same error for the same file.
       throw new ActionError(
-        `This pull request is too large to evaluate: a single Git command produced more than ${MAX_GIT_OUTPUT_BYTES / 1_000_000} MB of output. Nothing was truncated. Use per-file mode, or scope the rule with paths.`,
+        `One file's diff is larger than the ${MAX_GIT_OUTPUT_BYTES / 1_000_000} MB this Action can read. Nothing was truncated. Exclude that file with paths, or split the change.`,
       );
     }
     throw new ActionError(
