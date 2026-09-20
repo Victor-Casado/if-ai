@@ -3,9 +3,9 @@
 // message can be set from evidence instead of a guess.
 //
 // The payload is synthetic filler. No repository content is sent or printed.
-// Mirrors MAX_REQUEST_BYTES in src/jev.ts. Duplicated rather than imported so
-// the probe runs on plain Node without type stripping.
-const MAX_REQUEST_BYTES = 28_000;
+// The Action no longer imposes a model-sized limit of its own, so the sweep
+// brackets the measured provider boundary instead of a local constant.
+const SMALLEST_PROBE = 26_000;
 
 const provider = process.env.IF_AI_PROVIDER || 'openrouter';
 if (provider !== 'typesafe' && provider !== 'openrouter')
@@ -55,10 +55,10 @@ function body(content) {
 
 // Brackets the current cap on both sides: does the provider accept far more
 // than we allow, and where does it actually stop?
-const sizes = [MAX_REQUEST_BYTES - 2_000, 50_000, 100_000, 200_000, 400_000, 800_000, 1_600_000];
+const sizes = [SMALLEST_PROBE, 50_000, 100_000, 200_000, 400_000, 800_000, 1_600_000];
 
 console.log(`provider=${provider} endpoint=${endpoint} model=${model}`);
-console.log(`current MAX_REQUEST_BYTES=${MAX_REQUEST_BYTES}\n`);
+console.log('the Action sends what it has; this finds where the provider stops\n');
 
 for (const size of sizes) {
   const payload = body(filler(size));

@@ -19639,7 +19639,7 @@ async function collectSubjects(mode, pr, cwd, paths = []) {
 }
 
 // src/jev.ts
-var MAX_REQUEST_BYTES = 28e3;
+var MAX_REQUEST_BYTES = 2e6;
 var REQUEST_TIMEOUT_MS = 3e4;
 var MAX_ATTEMPTS = 2;
 var DEFAULT_RETRY_DELAY_MS = 1e3;
@@ -19695,7 +19695,7 @@ function requestBody(config, content) {
   });
   if (Buffer.byteLength(body) > MAX_REQUEST_BYTES) {
     throw new ActionError(
-      "Input exceeds the 28,000-byte request limit. Nothing was truncated. Use per-file mode for a large combined diff; reduce the PR if a single file is too large."
+      `This pull request is too large to send: the request would be over ${MAX_REQUEST_BYTES / 1e6} MB. Nothing was truncated. Use per-file mode, or scope the rule with paths.`
     );
   }
   return body;
