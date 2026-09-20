@@ -123,7 +123,7 @@ function isScore(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
 }
 
-// OpenRouter reports an oversized request as HTTP 400 with this marker.
+// OpenRouter reports an oversized request as HTTP 400 with this error_type.
 // TypeSafe returns a bare 400 with no body, so it cannot be told apart from
 // any other bad request and gets the general message.
 const CONTEXT_EXCEEDED_MARKER = 'max_tokens_exceeded';
@@ -131,7 +131,17 @@ const MAX_ERROR_BODY_BYTES = 4_000;
 
 // Reads a bounded prefix of an error body only to recognize a known failure.
 // The text itself is never logged or surfaced; it can echo the diff we sent.
-async function errorKind(response: Response): Promise<'context-exceeded' | undefined> {
+async function errorKind(
+  response: Response,
+  provider: Provider,
+): Promise<'context-exceeded' | undefined> {
+  // Only OpenRouter reports this in a structured form. Scanning any provider's
+  // body for the marker as text would misread an error that echoes the diff we
+  // sent, which can contain the marker itself; this file does.
+  if (provider !== 'openrouter') {
+    await response.body?.cancel();
+    return undefined;
+  }
   try {
     const reader = response.body?.getReader();
     if (!reader) return undefined;
@@ -140,21 +150,17 @@ async function errorKind(response: Response): Promise<'context-exceeded' | undef
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      chunks.push(value);
+      // Copy only what still fits. A single chunk can be larger than the whole
+      // limit, so storing it whole would leave the allocation unbounded.
+      chunks.push(value.subarray(0, MAX_ERROR_BODY_BYTES - size));
       size += value.byteLength;
       if (size >= MAX_ERROR_BODY_BYTES) {
         await reader.cancel();
         break;
       }
     }
-    // Slice as well as stop reading: one chunk can arrive larger than the
-    // limit, so the loop alone does not bound what gets scanned.
-    return Buffer.concat(chunks)
-      .subarray(0, MAX_ERROR_BODY_BYTES)
-      .toString('utf8')
-      .includes(CONTEXT_EXCEEDED_MARKER)
-      ? 'context-exceeded'
-      : undefined;
+    const detail = record(record(JSON.parse(Buffer.concat(chunks).toString('utf8')))?.detail);
+    return detail?.error_type === CONTEXT_EXCEEDED_MARKER ? 'context-exceeded' : undefined;
   } catch {
     return undefined;
   }
@@ -207,7 +213,11 @@ export async function evaluate(
           delay >= remainingMs()
         ) {
           // Only on the failing path; a retry discards the body instead.
-          throw httpError(response.status, config.provider, await errorKind(response));
+          throw httpError(
+            response.status,
+            config.provider,
+            await errorKind(response, config.provider),
+          );
         }
         await response.body?.cancel();
         onRetry(response.status, delay);

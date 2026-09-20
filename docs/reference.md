@@ -55,7 +55,7 @@ Try your rule against representative PRs before making the job required. Use det
 | Any answer is false or below the threshold   | `'false'` | `failed`  | Fail  |
 | Input, Git, network, or API error            | `'false'` | `error`   | Fail  |
 
-A provider rejection is reported as `Jev request failed (HTTP <status>)` with a cause. `400` is a bad request, and the usual cause is content larger than the model's context, so the message suggests `per-file` mode or `paths`. OpenRouter distinguishes that case explicitly and the message says so; TypeSafe returns a bare `400` that cannot be told apart from any other malformed request, so it gets the general wording. Provider response bodies are never logged or repeated in an error, since they can echo the content that was sent.
+A provider rejection is reported as `Jev request failed (HTTP <status>)` with a cause. `400` is a bad request, and the usual cause is content larger than the model's context, so the message suggests `per-file` mode or `paths`. OpenRouter distinguishes that case with a structured `detail.error_type` and the message says so; TypeSafe returns a bare `400` that cannot be told apart from any other malformed request, so it gets the general wording. Only that structured field classifies a response: an error body can echo the content that was sent, so matching the marker as text would let a diff mentioning it misclassify its own failure. Provider response bodies are never logged or repeated in an error, since they can echo the content that was sent.
 
 An empty body or diff is an error. Confidence equal to the threshold passes.
 

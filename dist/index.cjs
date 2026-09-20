@@ -19729,7 +19729,11 @@ function isScore(value) {
 }
 var CONTEXT_EXCEEDED_MARKER = "max_tokens_exceeded";
 var MAX_ERROR_BODY_BYTES = 4e3;
-async function errorKind(response) {
+async function errorKind(response, provider) {
+  if (provider !== "openrouter") {
+    await response.body?.cancel();
+    return void 0;
+  }
   try {
     const reader = response.body?.getReader();
     if (!reader) return void 0;
@@ -19738,14 +19742,15 @@ async function errorKind(response) {
     for (; ; ) {
       const { done, value } = await reader.read();
       if (done) break;
-      chunks.push(value);
+      chunks.push(value.subarray(0, MAX_ERROR_BODY_BYTES - size));
       size += value.byteLength;
       if (size >= MAX_ERROR_BODY_BYTES) {
         await reader.cancel();
         break;
       }
     }
-    return Buffer.concat(chunks).subarray(0, MAX_ERROR_BODY_BYTES).toString("utf8").includes(CONTEXT_EXCEEDED_MARKER) ? "context-exceeded" : void 0;
+    const detail = record(record(JSON.parse(Buffer.concat(chunks).toString("utf8")))?.detail);
+    return detail?.error_type === CONTEXT_EXCEEDED_MARKER ? "context-exceeded" : void 0;
   } catch {
     return void 0;
   }
@@ -19782,7 +19787,11 @@ async function evaluate(config, content, fetcher = fetch, onRetry = () => {
       if (!response.ok) {
         const delay = retryDelayMs(response.headers.get("retry-after"));
         if (lastAttempt || !isRetryableStatus(response.status) || delay > MAX_RETRY_DELAY_MS || delay >= remainingMs()) {
-          throw httpError(response.status, config.provider, await errorKind(response));
+          throw httpError(
+            response.status,
+            config.provider,
+            await errorKind(response, config.provider)
+          );
         }
         await response.body?.cancel();
         onRetry(response.status, delay);

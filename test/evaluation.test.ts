@@ -216,7 +216,7 @@ describe.each(['typesafe', 'openrouter'] as const)('Jev via %s', (provider) => {
     expect(error.message).not.toContain('private code');
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
-  it('recognizes an oversized request when the provider says so', async () => {
+  it('recognizes an oversized request only where the provider reports one', async () => {
     // The shape OpenRouter returned to scripts/probe-limits.mjs at 203 KB.
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
       new Response(JSON.stringify({ detail: { error_type: 'max_tokens_exceeded' } }), {
@@ -224,15 +224,35 @@ describe.each(['typesafe', 'openrouter'] as const)('Jev via %s', (provider) => {
       }),
     );
     const error = await failure(fetcher);
-    expect(error.message).toContain("larger than the model's context");
-    expect(error.message).toContain('paths');
-    expect(error.message).not.toContain('malformed');
+    if (provider === 'openrouter') {
+      expect(error.message).toContain("larger than the model's context");
+      expect(error.message).toContain('paths');
+      expect(error.message).not.toContain('malformed');
+    } else {
+      // TypeSafe sends no body, so this shape is not its to claim.
+      expect(error.message).toContain('rejected the request as malformed');
+    }
   });
-  it('reads only a bounded prefix of an error body', async () => {
-    const huge = 'x'.repeat(200_000) + 'max_tokens_exceeded';
+  it('does not classify an error body that merely quotes the marker', async () => {
+    // An error can echo the diff, and a diff of this repository contains the
+    // marker as source. Only the structured field may classify.
+    const echoed = "unrelated failure near +const MARKER = 'max_tokens_exceeded';";
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(echoed, { status: 400 }));
+    const error = await failure(fetcher);
+    expect(error.message).toContain('rejected the request as malformed');
+    // The general message names the same likely cause, so match the specific
+    // wording that only a classified response produces.
+    expect(error.message).not.toContain('The content is larger');
+  });
+  it('retains only a bounded prefix of an error body', async () => {
+    const huge = JSON.stringify({
+      padding: 'x'.repeat(200_000),
+      detail: { error_type: 'max_tokens_exceeded' },
+    });
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(huge, { status: 400 }));
     const error = await failure(fetcher, 'diff');
-    // The marker sits past the prefix, so it is not found and not echoed.
+    // Truncated long before the field, so the JSON cannot parse and nothing is
+    // classified. A chunk larger than the limit must not be retained whole.
     expect(error.message).toContain('rejected the request as malformed');
     expect(error.message.length).toBeLessThan(400);
   });
