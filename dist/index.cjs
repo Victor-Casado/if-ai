@@ -19460,15 +19460,29 @@ function info(message) {
 var import_promises = require("node:fs/promises");
 
 // src/config.ts
-var MAX_PATHS = 50;
-var MAX_PATH_BYTES = 200;
+var DEFAULTS = {
+  maxFiles: 200,
+  timeoutSeconds: 30,
+  retries: 1,
+  maxRequestBytes: 2e6,
+  maxFileBytes: 2e6
+};
 var ActionError = class extends Error {
 };
+var MAX_TIMEOUT_SECONDS = 2147483;
+function positiveInteger(raw, name, fallback, minimum = 1, maximum = Number.MAX_SAFE_INTEGER) {
+  const text = raw.trim();
+  if (!text) return fallback;
+  if (!/^\d+$/.test(text)) throw new ActionError(`${name} must be a whole number.`);
+  const value = Number(text);
+  if (!Number.isSafeInteger(value) || value < minimum)
+    throw new ActionError(`${name} must be ${minimum} or greater.`);
+  if (value > maximum) throw new ActionError(`${name} must be ${maximum} or fewer.`);
+  return value;
+}
 function readConfig(input) {
   const condition = input("condition").trim();
   if (!condition) throw new ActionError("condition is required.");
-  if (Buffer.byteLength(condition) > 4e3)
-    throw new ActionError("condition exceeds 4,000 UTF-8 bytes.");
   const threshold = input("min-confidence").trim();
   if (!/^(?:0(?:\.\d+)?|1(?:\.0+)?)$/.test(threshold)) {
     throw new ActionError(
@@ -19488,13 +19502,35 @@ function readConfig(input) {
       "api-key is required. Supply an Actions secret for the selected provider. Fork PRs do not receive repository secrets."
     );
   const model = input("model").trim() || (provider === "openrouter" ? "typesafe/jev-1.13" : "jev-1.13.0");
-  if (!/^[a-zA-Z0-9/~._-]{1,100}$/.test(model)) throw new ActionError("Invalid model identifier.");
+  if (!model || /[\s\u0000-\u001f\u007f]/.test(model))
+    throw new ActionError("model must not be empty or contain whitespace or control characters.");
   const paths = input("paths").split("\n").map((line) => line.trim()).filter((line) => line !== "");
-  if (paths.length > MAX_PATHS)
-    throw new ActionError(`paths accepts at most ${MAX_PATHS} entries.`);
-  if (paths.some((path) => Buffer.byteLength(path) > MAX_PATH_BYTES))
-    throw new ActionError(`Each paths entry must be ${MAX_PATH_BYTES} UTF-8 bytes or fewer.`);
-  return { condition, minConfidence: Number(threshold), mode, apiKey, provider, model, paths };
+  const timeoutSeconds = positiveInteger(
+    input("timeout-seconds"),
+    "timeout-seconds",
+    DEFAULTS.timeoutSeconds,
+    1,
+    MAX_TIMEOUT_SECONDS
+  );
+  return {
+    condition,
+    minConfidence: Number(threshold),
+    mode,
+    apiKey,
+    provider,
+    model,
+    paths,
+    maxFiles: positiveInteger(input("max-files"), "max-files", DEFAULTS.maxFiles),
+    timeoutMs: timeoutSeconds * 1e3,
+    // Zero is meaningful here: it turns off the retry and its second paid call.
+    retries: positiveInteger(input("retries"), "retries", DEFAULTS.retries, 0),
+    maxRequestBytes: positiveInteger(
+      input("max-request-bytes"),
+      "max-request-bytes",
+      DEFAULTS.maxRequestBytes
+    ),
+    maxFileBytes: positiveInteger(input("max-file-bytes"), "max-file-bytes", DEFAULTS.maxFileBytes)
+  };
 }
 function readPullRequest(eventName, payload) {
   if (eventName !== "pull_request" && eventName !== "pull_request_target") {
@@ -19521,8 +19557,7 @@ function safeError(error2) {
 var import_node_child_process = require("node:child_process");
 var import_node_util = require("node:util");
 var exec = (0, import_node_util.promisify)(import_node_child_process.execFile);
-var MAX_FILES = 200;
-var MAX_GIT_OUTPUT_BYTES = 2e6;
+var METADATA_OUTPUT_BYTES = 2e6;
 var flags = [
   "--no-ext-diff",
   "--no-textconv",
@@ -19530,12 +19565,12 @@ var flags = [
   "--no-renames",
   "--ignore-submodules=none"
 ];
-async function git(cwd, args) {
+async function git(cwd, args, maxBytes, oversize) {
   try {
     const { stdout } = await exec("git", ["--no-literal-pathspecs", ...args], {
       cwd,
       encoding: "buffer",
-      maxBuffer: MAX_GIT_OUTPUT_BYTES,
+      maxBuffer: maxBytes,
       timeout: 3e4,
       windowsHide: true,
       env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" }
@@ -19543,33 +19578,44 @@ async function git(cwd, args) {
     return new TextDecoder("utf-8", { fatal: true }).decode(stdout);
   } catch (error2) {
     if (error2?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
-      throw new ActionError(
-        `One file's diff is larger than the ${MAX_GIT_OUTPUT_BYTES / 1e6} MB this Action can read. Nothing was truncated. Exclude that file with paths, or split the change.`
-      );
+      throw new ActionError(oversize(maxBytes));
     }
     throw new ActionError(
       "Cannot read the complete Git diff. Use actions/checkout with fetch-depth: 0 and ensure both event commits exist. Git output must be UTF-8."
     );
   }
 }
-async function collectSubjects(mode, pr, cwd, paths = []) {
+async function collectSubjects(mode, pr, cwd, budget) {
+  const { paths, maxFiles, maxFileBytes } = budget;
+  const metadata = (args) => git(
+    cwd,
+    args,
+    Math.max(METADATA_OUTPUT_BYTES, maxFileBytes),
+    (limit) => `This pull request's change list is larger than ${limit} bytes, which is more than the Action can read. Nothing was truncated. Scope the rule with paths, or split the change.`
+  );
+  const patch = (args) => git(
+    cwd,
+    args,
+    maxFileBytes,
+    (limit) => `One file's diff is larger than the ${limit}-byte max-file-bytes budget. Nothing was truncated. Raise max-file-bytes, exclude that file with paths, or split the change.`
+  );
   if (mode === "pr-body") {
     if (!pr.body.trim())
       throw new ActionError("The PR body is empty. Add a description before running this check.");
     return [{ name: "PR body", content: pr.body }];
   }
-  const shallow = (await git(cwd, ["rev-parse", "--is-shallow-repository"])).trim();
+  const shallow = (await metadata(["rev-parse", "--is-shallow-repository"])).trim();
   if (shallow !== "false")
     throw new ActionError("A full-history checkout is required. Set fetch-depth: 0.");
-  const mergeBase = (await git(cwd, ["merge-base", pr.base, pr.head])).trim();
+  const mergeBase = (await metadata(["merge-base", pr.base, pr.head])).trim();
   if (!/^[a-f0-9]{40}$/.test(mergeBase))
     throw new ActionError("Cannot determine the PR merge base.");
-  const raw = await git(cwd, ["diff", ...flags, "--raw", "-z", mergeBase, pr.head, "--", ...paths]);
+  const raw = await metadata(["diff", ...flags, "--raw", "-z", mergeBase, pr.head, "--", ...paths]);
   const fields = raw.split("\0");
   if (fields.pop() !== "") throw new ActionError("Invalid Git change list.");
   if (fields.length === 0) {
     if (paths.length > 0) {
-      const unfiltered = await git(cwd, [
+      const unfiltered = await metadata([
         "diff",
         ...flags,
         "--raw",
@@ -19582,9 +19628,9 @@ async function collectSubjects(mode, pr, cwd, paths = []) {
     }
     throw new ActionError("The PR has no changed files to evaluate.");
   }
-  if (fields.length % 2 !== 0 || fields.length / 2 > MAX_FILES) {
+  if (fields.length % 2 !== 0 || fields.length / 2 > maxFiles) {
     throw new ActionError(
-      "The PR exceeds the 200-file limit or Git returned an invalid change list. Split the PR; nothing was truncated."
+      `The PR exceeds the ${maxFiles}-file max-files budget, or Git returned an invalid change list. Raise max-files, scope the rule with paths, or split the PR; nothing was truncated.`
     );
   }
   const subjects = [];
@@ -19598,7 +19644,7 @@ async function collectSubjects(mode, pr, cwd, paths = []) {
       if (/^:(?:160000 |\d{6} 160000 )/.test(meta))
         throw new ActionError("Submodule contents cannot be evaluated as a text diff.");
       const pathspec = [`:(top,literal)${name}`, `:(top,exclude,literal)${name}/`];
-      const stat2 = await git(cwd, [
+      const stat2 = await metadata([
         "diff",
         ...flags,
         "--numstat",
@@ -19610,7 +19656,7 @@ async function collectSubjects(mode, pr, cwd, paths = []) {
       ]);
       if (stat2.startsWith("-	-	"))
         throw new ActionError("Binary content cannot be evaluated as a text diff.");
-      const patch = await git(cwd, [
+      const filePatch = await patch([
         "diff",
         ...flags,
         "--unified=3",
@@ -19621,12 +19667,13 @@ async function collectSubjects(mode, pr, cwd, paths = []) {
         "--",
         ...pathspec
       ]);
-      if (patch.includes("\0")) throw new ActionError("Non-text content cannot be evaluated.");
-      if (/^[ +\-]version https:\/\/git-lfs.github.com\/spec\/v1\r?$/m.test(patch)) {
+      if (filePatch.includes("\0")) throw new ActionError("Non-text content cannot be evaluated.");
+      if (/^[ +\-]version https:\/\/git-lfs.github.com\/spec\/v1\r?$/m.test(filePatch)) {
         throw new ActionError("Git LFS pointers do not contain the changed file contents.");
       }
-      if (!patch.trim()) throw new ActionError("Git did not return a patch for this changed file.");
-      subjects.push({ name, content: patch });
+      if (!filePatch.trim())
+        throw new ActionError("Git did not return a patch for this changed file.");
+      subjects.push({ name, content: filePatch });
     } catch (error2) {
       if (!(error2 instanceof ActionError)) throw error2;
       subjects.push({ name, error: error2.message });
@@ -19639,12 +19686,9 @@ async function collectSubjects(mode, pr, cwd, paths = []) {
 }
 
 // src/jev.ts
-var MAX_REQUEST_BYTES = 2e6;
-var REQUEST_TIMEOUT_MS = 3e4;
-var MAX_ATTEMPTS = 2;
 var DEFAULT_RETRY_DELAY_MS = 1e3;
 var MAX_RETRY_DELAY_MS = 1e4;
-var TIMEOUT_MESSAGE = "Jev request timed out after 30 seconds. Rerun the check.";
+var timeoutMessage = (ms) => `Jev request timed out after ${ms / 1e3} seconds. Rerun the check, or raise timeout-seconds.`;
 var ENDPOINTS = {
   typesafe: "https://api.typesafe.ai/v1/systemone",
   openrouter: "https://openrouter.ai/api/alpha/decisions"
@@ -19661,15 +19705,15 @@ function retryDelayMs(header, now = Date.now()) {
   if (!Number.isNaN(at)) return Math.max(at - now, 0);
   return DEFAULT_RETRY_DELAY_MS;
 }
-function sleep(ms, signal) {
+function sleep(ms, signal, expired) {
   return new Promise((resolve, reject) => {
     if (signal.aborted) {
-      reject(new ActionError(TIMEOUT_MESSAGE));
+      reject(new ActionError(expired));
       return;
     }
     const onAbort = () => {
       clearTimeout(timer);
-      reject(new ActionError(TIMEOUT_MESSAGE));
+      reject(new ActionError(expired));
     };
     const timer = setTimeout(() => {
       signal.removeEventListener("abort", onAbort);
@@ -19693,9 +19737,9 @@ function requestBody(config, content) {
       }
     }
   });
-  if (Buffer.byteLength(body) > MAX_REQUEST_BYTES) {
+  if (Buffer.byteLength(body) > config.maxRequestBytes) {
     throw new ActionError(
-      `This pull request is too large to send: the request would be over ${MAX_REQUEST_BYTES / 1e6} MB. Nothing was truncated. Use per-file mode, or scope the rule with paths.`
+      `This pull request is too large to send: the request is over the ${config.maxRequestBytes}-byte max-request-bytes budget. Nothing was truncated. Raise max-request-bytes, use per-file mode, or scope the rule with paths.`
     );
   }
   return body;
@@ -19771,11 +19815,12 @@ function httpError(status, provider, kind) {
 async function evaluate(config, content, fetcher = fetch, onRetry = () => {
 }) {
   const body = requestBody(config, content);
-  const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  const signal = AbortSignal.timeout(config.timeoutMs);
+  const expired = timeoutMessage(config.timeoutMs);
   const startedAt = Date.now();
-  const remainingMs = () => REQUEST_TIMEOUT_MS - (Date.now() - startedAt);
+  const remainingMs = () => config.timeoutMs - (Date.now() - startedAt);
   for (let attempt = 1; ; attempt++) {
-    const lastAttempt = attempt >= MAX_ATTEMPTS;
+    const lastAttempt = attempt > config.retries;
     try {
       const response = await fetcher(ENDPOINTS[config.provider], {
         method: "POST",
@@ -19788,12 +19833,12 @@ async function evaluate(config, content, fetcher = fetch, onRetry = () => {
         const delay = retryDelayMs(response.headers.get("retry-after"));
         if (lastAttempt || !isRetryableStatus(response.status) || delay > MAX_RETRY_DELAY_MS || delay >= remainingMs()) {
           const kind = await errorKind(response, config.provider);
-          if (signal.aborted) throw new ActionError(TIMEOUT_MESSAGE);
+          if (signal.aborted) throw new ActionError(expired);
           throw httpError(response.status, config.provider, kind);
         }
         await response.body?.cancel();
         onRetry(response.status, delay);
-        await sleep(delay, signal);
+        await sleep(delay, signal, expired);
         continue;
       }
       const reader = response.body?.getReader();
@@ -19819,7 +19864,7 @@ async function evaluate(config, content, fetcher = fetch, onRetry = () => {
       return parseDecision(parsed);
     } catch (error2) {
       if (error2 instanceof ActionError) throw error2;
-      if (signal.aborted) throw new ActionError(TIMEOUT_MESSAGE);
+      if (signal.aborted) throw new ActionError(expired);
       throw new ActionError("Could not reach Jev. Check connectivity and rerun the check.");
     }
   }
@@ -19932,7 +19977,7 @@ async function main() {
     config.mode,
     pr,
     process.env.GITHUB_WORKSPACE || process.cwd(),
-    config.paths
+    config
   );
   if (subjects.length === 0) {
     info("No changed file matched paths. The condition does not apply; skipping.");

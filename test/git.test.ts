@@ -3,7 +3,15 @@ import { mkdir, mkdtemp, writeFile, rm, rename, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
-import { MAX_GIT_OUTPUT_BYTES, collectSubjects } from '../src/git.js';
+import { collectSubjects } from '../src/git.js';
+import { DEFAULTS } from '../src/config.js';
+
+const MAX_GIT_OUTPUT_BYTES = DEFAULTS.maxFileBytes;
+const budget = (paths: string[] = []) => ({
+  paths,
+  maxFiles: DEFAULTS.maxFiles,
+  maxFileBytes: DEFAULTS.maxFileBytes,
+});
 
 const dirs: string[] = [];
 function git(cwd: string, ...args: string[]): string {
@@ -41,10 +49,11 @@ it('reads PR body without needing a Git checkout', async () => {
       'pr-body',
       { body: 'Expected behavior and tests', base: '', head: '' },
       '/missing',
+      budget(),
     ),
   ).toEqual([{ name: 'PR body', content: 'Expected behavior and tests' }]);
   await expect(
-    collectSubjects('pr-body', { body: ' ', base: '', head: '' }, '/missing'),
+    collectSubjects('pr-body', { body: ' ', base: '', head: '' }, '/missing', budget()),
   ).rejects.toThrow('empty');
 });
 
@@ -53,12 +62,12 @@ it('includes every file, deleted content, and literal special-character paths', 
   await unlink(join(cwd, 'existing.txt'));
   await writeFile(join(cwd, '[literal] name.txt'), 'new behavior\n');
   const head = commit(cwd);
-  const subjects = await collectSubjects('per-file', { base, head, body: '' }, cwd);
+  const subjects = await collectSubjects('per-file', { base, head, body: '' }, cwd, budget());
   expect(subjects.map((s) => s.name)).toEqual(['[literal] name.txt', 'existing.txt']);
   expect(subjects[0]?.content).toContain('+new behavior');
   expect(subjects[0]?.content).not.toContain('-old text');
   expect(subjects[1]?.content).toContain('-old text');
-  const combined = await collectSubjects('diff', { base, head, body: '' }, cwd);
+  const combined = await collectSubjects('diff', { base, head, body: '' }, cwd, budget());
   expect(combined[0]?.content).toContain('+new behavior');
   expect(combined[0]?.content).toContain('-old text');
 });
@@ -72,7 +81,7 @@ it('uses merge-base and event head, ignoring newer base and working tree changes
   await writeFile(join(cwd, 'base-only.txt'), 'unrelated base work\n');
   const newerBase = commit(cwd);
   await writeFile(join(cwd, 'existing.txt'), 'uncommitted noise\n');
-  const result = await collectSubjects('diff', { base: newerBase, head, body: '' }, cwd);
+  const result = await collectSubjects('diff', { base: newerBase, head, body: '' }, cwd, budget());
   expect(result[0]?.content).toContain('feature');
   expect(result[0]?.content).not.toContain('unrelated');
   expect(result[0]?.content).not.toContain('uncommitted');
@@ -82,7 +91,12 @@ it('uses merge-base and event head, ignoring newer base and working tree changes
 it('represents renames as a complete deletion plus addition', async () => {
   const { cwd, base } = await repository();
   await rename(join(cwd, 'existing.txt'), join(cwd, 'renamed.txt'));
-  const result = await collectSubjects('per-file', { base, head: commit(cwd), body: '' }, cwd);
+  const result = await collectSubjects(
+    'per-file',
+    { base, head: commit(cwd), body: '' },
+    cwd,
+    budget(),
+  );
   expect(result.map((r) => r.name)).toEqual(['existing.txt', 'renamed.txt']);
   expect(result[0]?.content).toContain('-old text');
   expect(result[1]?.content).toContain('+old text');
@@ -97,22 +111,22 @@ it('identifies binary files and LFS pointers instead of judging incomplete conte
   );
   await writeFile(join(cwd, 'valid.txt'), 'valid\n');
   const head = commit(cwd);
-  const result = await collectSubjects('per-file', { base, head, body: '' }, cwd);
+  const result = await collectSubjects('per-file', { base, head, body: '' }, cwd, budget());
   expect(result.find((s) => s.name === 'image.bin')?.error).toContain('Binary');
   expect(result.find((s) => s.name === 'large.dat')?.error).toContain('LFS');
   expect(result.find((s) => s.name === 'valid.txt')?.content).toContain('+valid');
-  const combined = await collectSubjects('diff', { base, head, body: '' }, cwd);
+  const combined = await collectSubjects('diff', { base, head, body: '' }, cwd, budget());
   expect(combined).toHaveLength(2);
   expect(combined.every((s) => s.error)).toBe(true);
 });
 
 it('rejects empty comparisons and unavailable commit history', async () => {
   const { cwd, base } = await repository();
-  await expect(collectSubjects('diff', { base, head: base, body: '' }, cwd)).rejects.toThrow(
-    'no changed files',
-  );
   await expect(
-    collectSubjects('diff', { base, head: '0'.repeat(40), body: '' }, cwd),
+    collectSubjects('diff', { base, head: base, body: '' }, cwd, budget()),
+  ).rejects.toThrow('no changed files');
+  await expect(
+    collectSubjects('diff', { base, head: '0'.repeat(40), body: '' }, cwd, budget()),
   ).rejects.toThrow('complete Git diff');
 });
 
@@ -122,7 +136,7 @@ it('does not let Git ignore settings hide submodule changes', async () => {
   git(cwd, 'update-index', '--add', '--cacheinfo', `160000,${base},vendor`);
   git(cwd, 'commit', '-m', 'add gitlink');
   const head = git(cwd, 'rev-parse', 'HEAD');
-  const result = await collectSubjects('per-file', { base, head, body: '' }, cwd);
+  const result = await collectSubjects('per-file', { base, head, body: '' }, cwd, budget());
   expect(result).toEqual([
     { name: 'vendor', error: 'Submodule contents cannot be evaluated as a text diff.' },
   ]);
@@ -136,7 +150,7 @@ it('rejects modified LFS pointers whose unchanged header is a context line', asy
   const base = commit(cwd);
   await writeFile(join(cwd, 'asset.dat'), pointer('b'.repeat(64)));
   const head = commit(cwd);
-  const result = await collectSubjects('per-file', { base, head, body: '' }, cwd);
+  const result = await collectSubjects('per-file', { base, head, body: '' }, cwd, budget());
   expect(result[0]?.error).toContain('LFS');
 });
 
@@ -162,13 +176,13 @@ it.each(['file-to-directory', 'directory-to-file'])(
       await writeFile(join(cwd, name), 'new parent content\n');
     }
     const head = commit(cwd);
-    const subjects = await collectSubjects('per-file', { base, head, body: '' }, cwd);
+    const subjects = await collectSubjects('per-file', { base, head, body: '' }, cwd, budget());
     expect(subjects.map((subject) => subject.name)).toEqual([name, `${name}/child.txt`]);
     expect(subjects[0]?.content).toContain('parent content');
     expect(subjects[0]?.content).not.toContain('child content');
     expect(subjects[1]?.content).toContain('child content');
     expect(subjects[1]?.content).not.toContain('parent content');
-    const combined = await collectSubjects('diff', { base, head, body: '' }, cwd);
+    const combined = await collectSubjects('diff', { base, head, body: '' }, cwd, budget());
     expect(combined[0]?.content?.match(/^diff --git /gm)).toHaveLength(2);
   },
 );
@@ -183,13 +197,13 @@ it('limits diff and per-file evaluation to matching pathspecs', async () => {
   const head = commit(cwd);
   const pr = { body: '', base, head };
 
-  const scoped = await collectSubjects('per-file', pr, cwd, ['src/**']);
+  const scoped = await collectSubjects('per-file', pr, cwd, budget(['src/**']));
   expect(scoped.map((subject) => subject.name)).toEqual(['src/handler.ts']);
 
-  const excluded = await collectSubjects('per-file', pr, cwd, [':(exclude).github/**']);
+  const excluded = await collectSubjects('per-file', pr, cwd, budget([':(exclude).github/**']));
   expect(excluded.map((subject) => subject.name)).not.toContain('.github/workflows/rules.yml');
 
-  const combined = await collectSubjects('diff', pr, cwd, ['src/**', 'README.md']);
+  const combined = await collectSubjects('diff', pr, cwd, budget(['src/**', 'README.md']));
   expect(combined).toHaveLength(1);
   expect(combined[0]!.content).toContain('src/handler.ts');
   expect(combined[0]!.content).not.toContain('rules.yml');
@@ -201,18 +215,18 @@ it('treats a filter that matches nothing as not applicable, but an empty PR as a
   const head = commit(cwd);
   const pr = { body: '', base, head };
 
-  expect(await collectSubjects('diff', pr, cwd, ['src/**'])).toEqual([]);
-  expect(await collectSubjects('per-file', pr, cwd, ['src/**'])).toEqual([]);
-  await expect(collectSubjects('diff', pr, cwd, [])).resolves.toHaveLength(1);
-  await expect(collectSubjects('diff', { body: '', base, head: base }, cwd, [])).rejects.toThrow(
-    'no changed files',
-  );
+  expect(await collectSubjects('diff', pr, cwd, budget(['src/**']))).toEqual([]);
+  expect(await collectSubjects('per-file', pr, cwd, budget(['src/**']))).toEqual([]);
+  await expect(collectSubjects('diff', pr, cwd, budget([]))).resolves.toHaveLength(1);
+  await expect(
+    collectSubjects('diff', { body: '', base, head: base }, cwd, budget([])),
+  ).rejects.toThrow('no changed files');
   // A filter must not disguise an empty comparison as a rule that does not apply.
   await expect(
-    collectSubjects('diff', { body: '', base, head: base }, cwd, ['src/**']),
+    collectSubjects('diff', { body: '', base, head: base }, cwd, budget(['src/**'])),
   ).rejects.toThrow('no changed files');
   await expect(
-    collectSubjects('per-file', { body: '', base, head: base }, cwd, ['src/**']),
+    collectSubjects('per-file', { body: '', base, head: base }, cwd, budget(['src/**'])),
   ).rejects.toThrow('no changed files');
 });
 
@@ -222,8 +236,8 @@ it('reports an oversized pull request as too large, not as a broken checkout', a
   // read at all. Just over it must not be reported as a checkout problem.
   await writeFile(join(cwd, 'huge.txt'), 'x'.repeat(MAX_GIT_OUTPUT_BYTES + 100_000));
   const head = commit(cwd);
-  const [subject] = await collectSubjects('diff', { body: '', base, head }, cwd);
-  expect(subject!.error).toContain('larger than the 2 MB this Action can read');
+  const [subject] = await collectSubjects('diff', { body: '', base, head }, cwd, budget());
+  expect(subject!.error).toContain('max-file-bytes budget');
   expect(subject!.error).toContain('paths');
   expect(subject!.error).not.toContain('fetch-depth');
   // Per-file mode runs the same per-file command, so it must not be suggested.
@@ -236,7 +250,7 @@ it('bounds the largest single file, not the pull request', async () => {
   for (const name of ['a.txt', 'b.txt', 'c.txt'])
     await writeFile(join(cwd, name), 'x'.repeat(each));
   const head = commit(cwd);
-  const [subject] = await collectSubjects('diff', { body: '', base, head }, cwd);
+  const [subject] = await collectSubjects('diff', { body: '', base, head }, cwd, budget());
   // Comfortably over the per-command ceiling in total, under it per file.
   expect(subject!.error).toBeUndefined();
   expect(subject!.content!.length).toBeGreaterThan(MAX_GIT_OUTPUT_BYTES);
@@ -247,7 +261,48 @@ it('reads a pull request just under the output ceiling in full', async () => {
   const size = MAX_GIT_OUTPUT_BYTES - 100_000;
   await writeFile(join(cwd, 'large.txt'), 'x'.repeat(size));
   const head = commit(cwd);
-  const [subject] = await collectSubjects('diff', { body: '', base, head }, cwd);
+  const [subject] = await collectSubjects('diff', { body: '', base, head }, cwd, budget());
   expect(subject!.error).toBeUndefined();
   expect(subject!.content!.length).toBeGreaterThan(size);
+});
+
+it('honors a lowered max-files budget', async () => {
+  const { cwd, base } = await repository();
+  for (const name of ['one.txt', 'two.txt', 'three.txt'])
+    await writeFile(join(cwd, name), 'change\n');
+  const head = commit(cwd);
+  const pr = { body: '', base, head };
+  await expect(collectSubjects('per-file', pr, cwd, { ...budget(), maxFiles: 2 })).rejects.toThrow(
+    'max-files budget',
+  );
+  expect(await collectSubjects('per-file', pr, cwd, { ...budget(), maxFiles: 10 })).toHaveLength(3);
+});
+
+it('honors a lowered max-file-bytes budget', async () => {
+  const { cwd, base } = await repository();
+  await writeFile(join(cwd, 'small.txt'), 'x'.repeat(5_000));
+  const head = commit(cwd);
+  const pr = { body: '', base, head };
+  const [tight] = await collectSubjects('diff', pr, cwd, { ...budget(), maxFileBytes: 1_000 });
+  expect(tight!.error).toContain('max-file-bytes budget');
+  const [ample] = await collectSubjects('diff', pr, cwd, { ...budget(), maxFileBytes: 100_000 });
+  expect(ample!.error).toBeUndefined();
+});
+
+it('keeps the change list readable when max-file-bytes is small', async () => {
+  const { cwd, base } = await repository();
+  // Enough paths that the raw change list alone exceeds a tiny file budget.
+  for (let i = 0; i < 60; i++)
+    await writeFile(join(cwd, `some-fairly-long-file-name-${i}.txt`), 'change\n');
+  const head = commit(cwd);
+  const pr = { body: '', base, head };
+  const subjects = await collectSubjects('per-file', pr, cwd, {
+    ...budget(),
+    maxFileBytes: 200,
+    maxFiles: 500,
+  });
+  // Metadata has its own ceiling, so the list is read and each patch is judged
+  // on its own rather than the whole run failing before it starts.
+  expect(subjects).toHaveLength(60);
+  expect(subjects.some((subject) => subject.error?.includes('change list'))).toBe(false);
 });

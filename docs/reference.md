@@ -20,7 +20,7 @@ paths: |
   :(exclude)src/**/*.test.ts
 ```
 
-Filtering happens before the 200-file limit, so a large pull request scoped to a few files is evaluated rather than rejected. In `per-file` mode this is also the cost control: one paid call per matching file instead of one per changed file.
+Filtering happens before the `max-files` budget, so a large pull request scoped to a few files is evaluated rather than rejected. In `per-file` mode this is also the cost control: one paid call per matching file instead of one per changed file.
 
 A rule scoped to `src/**` does not apply to a documentation-only pull request. That run reports `skipped` and passes, rather than asking the model to reason about a diff containing no relevant evidence.
 
@@ -32,15 +32,20 @@ Per-file evaluations cannot see other files. PR-body mode checks the description
 
 ## Inputs
 
-| Input            | Required | Description                                                                                                            |
-| ---------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `condition`      | Yes      | Statement that must be true. Up to 4,000 UTF-8 bytes.                                                                  |
-| `min-confidence` | Yes      | Number from `0` to `1`, inclusive, such as `'0.90'`. No default.                                                       |
-| `api-key`        | Yes      | Key for the selected provider, supplied as a secret.                                                                   |
-| `provider`       | No       | `typesafe` or `openrouter`. Defaults to `openrouter`.                                                                  |
-| `mode`           | No       | `pr-body`, `diff`, or `per-file`. Defaults to `diff`.                                                                  |
-| `paths`          | No       | Git pathspecs, one per line, limiting which changed files are evaluated. Ignored in `pr-body` mode.                    |
-| `model`          | No       | Defaults to `jev-1.13.0` for TypeSafe or `typesafe/jev-1.13` for OpenRouter. Use the selected provider's Jev model ID. |
+| Input               | Required | Description                                                                                                            |
+| ------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `condition`         | Yes      | Statement that must be true. Sized by the provider along with the rest of the request.                                 |
+| `min-confidence`    | Yes      | Number from `0` to `1`, inclusive, such as `'0.90'`. No default.                                                       |
+| `api-key`           | Yes      | Key for the selected provider, supplied as a secret.                                                                   |
+| `provider`          | No       | `typesafe` or `openrouter`. Defaults to `openrouter`.                                                                  |
+| `mode`              | No       | `pr-body`, `diff`, or `per-file`. Defaults to `diff`.                                                                  |
+| `paths`             | No       | Git pathspecs, one per line, limiting which changed files are evaluated. Ignored in `pr-body` mode.                    |
+| `max-files`         | No       | Largest number of changed files to evaluate, after `paths` filtering. Defaults to `200`.                               |
+| `timeout-seconds`   | No       | Deadline for one evaluation, covering every attempt. Defaults to `30`.                                                 |
+| `retries`           | No       | Retries after a rate limit or server fault, inside the deadline. Defaults to `1`. `0` disables the second paid call.   |
+| `max-request-bytes` | No       | Largest request to send. Defaults to `2000000`.                                                                        |
+| `max-file-bytes`    | No       | Largest diff to read for one file. Defaults to `2000000`.                                                              |
+| `model`             | No       | Defaults to `jev-1.13.0` for TypeSafe or `typesafe/jev-1.13` for OpenRouter. Use the selected provider's Jev model ID. |
 
 For per-file rules, say how unrelated files should be treated. For example: "Any new user-facing error message explains how to recover. Changes without error messages satisfy this condition."
 
@@ -77,6 +82,16 @@ if-ai uses Jev's two-option Choice API to obtain native confidence. The minimum 
 
 Use `if: always()` on a later step to inspect outputs after failure. Pass outputs through environment variables when using them in shell commands.
 
+## Budgets
+
+Every numeric limit above is a budget this Action chose, not a provider constraint, and each one is yours to change. They exist because something has to bound cost, time, or memory, and the defaults are a starting point rather than a discovered truth.
+
+None of them describe what the model can accept. Neither provider publishes a request size limit, so if-ai does not invent one: it sends the request and reports the rejection. `max-request-bytes` and `max-file-bytes` are transport and memory guards that sit far above anything either provider would take, so that an impossible request fails at once rather than spending the deadline on itself.
+
+`max-files` bounds paid calls, which matters most in `per-file` mode where each file is its own request. `retries` set to `0` guarantees one paid call per evaluation.
+
+Model identifiers are the provider's to define. if-ai rejects only a name that is empty or carries whitespace or control characters, and lets the provider say whether the rest exists. An earlier allowlist here rejected a fifth of OpenRouter's catalog, which uses suffixes such as `:free` and `:batch`.
+
 ## Skipped jobs and required checks
 
 GitHub reports a job skipped by its `if` as the `skipped` conclusion, and counts that as satisfying a required status check. Two consequences are worth knowing before making an if-ai job required.
@@ -88,10 +103,10 @@ More subtly, GitHub evaluates the most recent check run for each name on a commi
 ## Limits and privacy
 
 - The provider decides how much content it can evaluate. Neither publishes a request size limit, so if-ai sends the request and reports the rejection rather than guessing a limit of its own. Both were measured accepting a 102 KB request and rejecting a 203 KB one, consistent with Jev's 32,000 token context; the exact boundary depends on how the content tokenizes. A rejection arrives as HTTP 400 and is explained, not truncated.
-- A request larger than 2 MB fails locally without being sent. That is a transport guard rather than a model limit: nothing either provider would accept comes near it, and it exists so an absurd payload fails immediately instead of spending the deadline uploading.
-- No single changed file may have a patch larger than 2 MB. Node buffers a child process's output in memory, so this is a hard ceiling on what the Action can read at all rather than a policy choice. It applies to each file's patch separately, so it bounds the largest single file rather than the pull request; 2.7 MB spread over three files is read without trouble. A file over the ceiling fails with a message naming that cause. Per-file mode does not help, because it runs the same per-file command; exclude the file with `paths` or split the change.
-- Diff modes accept up to 200 changed paths. Binary files, LFS pointers, submodules, non-UTF-8 patches, and incomplete Git output fail explicitly. Per-file mode still evaluates the other readable files.
-- Each request has a 30-second deadline covering every attempt. A rate limit (HTTP 429) or a server fault (HTTP 5xx) is retried once inside that deadline, honoring `Retry-After` up to 10 seconds; the retry is logged. A provider asking for longer than 10 seconds, or longer than the deadline has left, reports the status instead of waiting. Request faults such as 401, 402, and 422 are not retried, and neither are timeouts or transport failures. A retried request is a second paid call. A per-file run makes one paid call per readable, in-limit file; set a job timeout.
+- A request larger than `max-request-bytes`, 2 MB by default, fails locally without being sent. That is a transport guard rather than a model limit: nothing either provider would accept comes near it, and it exists so an absurd payload fails immediately instead of spending the deadline uploading.
+- No single changed file may have a patch larger than `max-file-bytes`, 2 MB by default. Change lists and commit metadata have their own ceiling, so lowering `max-file-bytes` to bound one patch does not make the file list unreadable. Node buffers a child process's output in memory, so this is a hard ceiling on what the Action can read at all rather than a policy choice. It applies to each file's patch separately, so it bounds the largest single file rather than the pull request; 2.7 MB spread over three files is read without trouble. A file over the ceiling fails with a message naming that cause. Per-file mode does not help, because it runs the same per-file command; exclude the file with `paths` or split the change.
+- Diff modes accept up to `max-files` changed paths, 200 by default, counted after `paths` filtering. Binary files, LFS pointers, submodules, non-UTF-8 patches, and incomplete Git output fail explicitly. Per-file mode still evaluates the other readable files.
+- Each request has a `timeout-seconds` deadline covering every attempt, 30 by default and capped at 2,147,483 so the underlying timer stays honest. A rate limit (HTTP 429) or a server fault (HTTP 5xx) is retried up to `retries` times, 1 by default, inside that deadline, honoring `Retry-After` up to 10 seconds; the retry is logged. `retries: 0` never spends a second paid call. A provider asking for longer than 10 seconds, which is fixed, or longer than the deadline has left, reports the status instead of waiting. Request faults such as 401, 402, and 422 are not retried, and neither are timeouts or transport failures. A retried request is another paid call. A per-file run makes one paid call per readable, in-limit file; set a job timeout.
 - The selected content and condition go to TypeSafe, directly or through OpenRouter according to `provider`. if-ai has no backend or telemetry. Logs and summaries contain paths, scores, and sanitized errors, not source or provider response bodies.
 
 PR content can attempt to manipulate the model. Keep tests, scanners, and review for decisions that need them. See [SECURITY.md](../SECURITY.md) for credential and fork-workflow guidance.

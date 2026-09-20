@@ -4,13 +4,15 @@ import { ActionError, type Mode, type PullRequest } from './config.js';
 import type { Subject } from './check.js';
 
 const exec = promisify(execFile);
-const MAX_FILES = 200;
-// Node buffers a child process's stdout in memory, so this is a hard ceiling on
-// what the Action can read at all, not a policy choice. It applies per command,
-// and each file's patch is its own command, so it bounds the largest single
-// file rather than the pull request. Verified: one 1.9 MB file is read in full,
-// one 2.1 MB file is not, and 2.7 MB spread over three files is fine.
-export const MAX_GIT_OUTPUT_BYTES = 2_000_000;
+// Node buffers a child process's stdout in memory, so these bound what the
+// Action can read at all. max-file-bytes covers one file's patch, which is its
+// own command: verified at the 2 MB default, one 1.9 MB file is read in full,
+// one 2.1 MB file is not, and 2.7 MB over three files is fine.
+//
+// Change lists and commit metadata get their own ceiling. They grow with the
+// number of changed paths rather than with any one file, so lowering
+// max-file-bytes to bound a single patch must not make them unreadable.
+const METADATA_OUTPUT_BYTES = 2_000_000;
 const flags = [
   '--no-ext-diff',
   '--no-textconv',
@@ -19,12 +21,17 @@ const flags = [
   '--ignore-submodules=none',
 ];
 
-async function git(cwd: string, args: string[]): Promise<string> {
+async function git(
+  cwd: string,
+  args: string[],
+  maxBytes: number,
+  oversize: (limit: number) => string,
+): Promise<string> {
   try {
     const { stdout } = await exec('git', ['--no-literal-pathspecs', ...args], {
       cwd,
       encoding: 'buffer',
-      maxBuffer: MAX_GIT_OUTPUT_BYTES,
+      maxBuffer: maxBytes,
       timeout: 30_000,
       windowsHide: true,
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' },
@@ -33,11 +40,7 @@ async function git(cwd: string, args: string[]): Promise<string> {
   } catch (error) {
     // Too big to read and unable to read need different fixes, so say which.
     if ((error as { code?: string } | undefined)?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
-      // Per-file mode is not a way out: it runs the same per-file command and
-      // records the same error for the same file.
-      throw new ActionError(
-        `One file's diff is larger than the ${MAX_GIT_OUTPUT_BYTES / 1_000_000} MB this Action can read. Nothing was truncated. Exclude that file with paths, or split the change.`,
-      );
+      throw new ActionError(oversize(maxBytes));
     }
     throw new ActionError(
       'Cannot read the complete Git diff. Use actions/checkout with fetch-depth: 0 and ensure both event commits exist. Git output must be UTF-8.',
@@ -45,24 +48,51 @@ async function git(cwd: string, args: string[]): Promise<string> {
   }
 }
 
+export interface Budget {
+  paths: string[];
+  maxFiles: number;
+  maxFileBytes: number;
+}
+
 export async function collectSubjects(
   mode: Mode,
   pr: PullRequest,
   cwd: string,
-  paths: string[] = [],
+  budget: Budget,
 ): Promise<Subject[]> {
+  const { paths, maxFiles, maxFileBytes } = budget;
+  // Raising max-file-bytes raises the metadata ceiling with it; lowering it
+  // does not, because a change list is not a file.
+  const metadata = (args: string[]) =>
+    git(
+      cwd,
+      args,
+      Math.max(METADATA_OUTPUT_BYTES, maxFileBytes),
+      (limit) =>
+        `This pull request's change list is larger than ${limit} bytes, which is more than the Action can read. Nothing was truncated. Scope the rule with paths, or split the change.`,
+    );
+  // Per-file mode is not a way out of the patch limit: it runs the same
+  // per-file command and records the same error for the same file.
+  const patch = (args: string[]) =>
+    git(
+      cwd,
+      args,
+      maxFileBytes,
+      (limit) =>
+        `One file's diff is larger than the ${limit}-byte max-file-bytes budget. Nothing was truncated. Raise max-file-bytes, exclude that file with paths, or split the change.`,
+    );
   if (mode === 'pr-body') {
     if (!pr.body.trim())
       throw new ActionError('The PR body is empty. Add a description before running this check.');
     return [{ name: 'PR body', content: pr.body }];
   }
-  const shallow = (await git(cwd, ['rev-parse', '--is-shallow-repository'])).trim();
+  const shallow = (await metadata(['rev-parse', '--is-shallow-repository'])).trim();
   if (shallow !== 'false')
     throw new ActionError('A full-history checkout is required. Set fetch-depth: 0.');
-  const mergeBase = (await git(cwd, ['merge-base', pr.base, pr.head])).trim();
+  const mergeBase = (await metadata(['merge-base', pr.base, pr.head])).trim();
   if (!/^[a-f0-9]{40}$/.test(mergeBase))
     throw new ActionError('Cannot determine the PR merge base.');
-  const raw = await git(cwd, ['diff', ...flags, '--raw', '-z', mergeBase, pr.head, '--', ...paths]);
+  const raw = await metadata(['diff', ...flags, '--raw', '-z', mergeBase, pr.head, '--', ...paths]);
   const fields = raw.split('\0');
   if (fields.pop() !== '') throw new ActionError('Invalid Git change list.');
   if (fields.length === 0) {
@@ -70,7 +100,7 @@ export async function collectSubjects(
     // which is an ordinary outcome. A PR with no changes at all is not, and a
     // filter must not disguise one as the other, so ask again without it.
     if (paths.length > 0) {
-      const unfiltered = await git(cwd, [
+      const unfiltered = await metadata([
         'diff',
         ...flags,
         '--raw',
@@ -83,9 +113,9 @@ export async function collectSubjects(
     }
     throw new ActionError('The PR has no changed files to evaluate.');
   }
-  if (fields.length % 2 !== 0 || fields.length / 2 > MAX_FILES) {
+  if (fields.length % 2 !== 0 || fields.length / 2 > maxFiles) {
     throw new ActionError(
-      'The PR exceeds the 200-file limit or Git returned an invalid change list. Split the PR; nothing was truncated.',
+      `The PR exceeds the ${maxFiles}-file max-files budget, or Git returned an invalid change list. Raise max-files, scope the rule with paths, or split the PR; nothing was truncated.`,
     );
   }
   const subjects: Subject[] = [];
@@ -101,7 +131,7 @@ export async function collectSubjects(
       // A literal path still matches descendants. Exclude them when a file becomes
       // a directory (or the reverse), so each subject contains exactly one path.
       const pathspec = [`:(top,literal)${name}`, `:(top,exclude,literal)${name}/`];
-      const stat = await git(cwd, [
+      const stat = await metadata([
         'diff',
         ...flags,
         '--numstat',
@@ -113,7 +143,7 @@ export async function collectSubjects(
       ]);
       if (stat.startsWith('-\t-\t'))
         throw new ActionError('Binary content cannot be evaluated as a text diff.');
-      const patch = await git(cwd, [
+      const filePatch = await patch([
         'diff',
         ...flags,
         '--unified=3',
@@ -124,12 +154,13 @@ export async function collectSubjects(
         '--',
         ...pathspec,
       ]);
-      if (patch.includes('\0')) throw new ActionError('Non-text content cannot be evaluated.');
-      if (/^[ +\-]version https:\/\/git-lfs.github.com\/spec\/v1\r?$/m.test(patch)) {
+      if (filePatch.includes('\0')) throw new ActionError('Non-text content cannot be evaluated.');
+      if (/^[ +\-]version https:\/\/git-lfs.github.com\/spec\/v1\r?$/m.test(filePatch)) {
         throw new ActionError('Git LFS pointers do not contain the changed file contents.');
       }
-      if (!patch.trim()) throw new ActionError('Git did not return a patch for this changed file.');
-      subjects.push({ name, content: patch });
+      if (!filePatch.trim())
+        throw new ActionError('Git did not return a patch for this changed file.');
+      subjects.push({ name, content: filePatch });
     } catch (error) {
       if (!(error instanceof ActionError)) throw error;
       subjects.push({ name, error: error.message });

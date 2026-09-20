@@ -25,6 +25,26 @@ inputs:
       Optional Git pathspecs, one per line, limiting which changed files diff and
       per-file modes evaluate. When no changed file matches, the check passes
       without calling Jev and reports status skipped. Ignored in pr-body mode.
+  max-files:
+    description: >-
+      Largest number of changed files to evaluate, after paths filtering.
+      Defaults to 200. A budget this Action chose, not a provider limit.
+  timeout-seconds:
+    description: >-
+      Deadline for one evaluation, covering every attempt. Defaults to 30.
+  retries:
+    description: >-
+      Retries after a rate limit or a server fault, inside the deadline.
+      Defaults to 1. Set 0 to never spend a second paid call on one evaluation.
+  max-request-bytes:
+    description: >-
+      Largest request to send. Defaults to 2000000. This is a transport guard,
+      not a model limit: the provider decides what it can evaluate and its
+      rejection is reported.
+  max-file-bytes:
+    description: >-
+      Largest diff to read for a single file. Defaults to 2000000, bounded by
+      the memory used to buffer Git output.
   model:
     description: Jev model identifier. Defaults to jev-1.13.0 for TypeSafe or typesafe/jev-1.13 for OpenRouter.
 outputs:
