@@ -207,4 +207,11 @@ it('treats a filter that matches nothing as not applicable, but an empty PR as a
   await expect(collectSubjects('diff', { body: '', base, head: base }, cwd, [])).rejects.toThrow(
     'no changed files',
   );
+  // A filter must not disguise an empty comparison as a rule that does not apply.
+  await expect(
+    collectSubjects('diff', { body: '', base, head: base }, cwd, ['src/**']),
+  ).rejects.toThrow('no changed files');
+  await expect(
+    collectSubjects('per-file', { body: '', base, head: base }, cwd, ['src/**']),
+  ).rejects.toThrow('no changed files');
 });

@@ -19562,7 +19562,18 @@ async function collectSubjects(mode, pr, cwd, paths = []) {
   const fields = raw.split("\0");
   if (fields.pop() !== "") throw new ActionError("Invalid Git change list.");
   if (fields.length === 0) {
-    if (paths.length > 0) return [];
+    if (paths.length > 0) {
+      const unfiltered = await git(cwd, [
+        "diff",
+        ...flags,
+        "--raw",
+        "-z",
+        mergeBase,
+        pr.head,
+        "--"
+      ]);
+      if (unfiltered !== "") return [];
+    }
     throw new ActionError("The PR has no changed files to evaluate.");
   }
   if (fields.length % 2 !== 0 || fields.length / 2 > MAX_FILES) {

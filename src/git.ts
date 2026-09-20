@@ -53,8 +53,20 @@ export async function collectSubjects(
   if (fields.pop() !== '') throw new ActionError('Invalid Git change list.');
   if (fields.length === 0) {
     // A filter that matches nothing means the rule does not apply to this PR,
-    // which is an ordinary outcome. A PR with no changes at all is not.
-    if (paths.length > 0) return [];
+    // which is an ordinary outcome. A PR with no changes at all is not, and a
+    // filter must not disguise one as the other, so ask again without it.
+    if (paths.length > 0) {
+      const unfiltered = await git(cwd, [
+        'diff',
+        ...flags,
+        '--raw',
+        '-z',
+        mergeBase,
+        pr.head,
+        '--',
+      ]);
+      if (unfiltered !== '') return [];
+    }
     throw new ActionError('The PR has no changed files to evaluate.');
   }
   if (fields.length % 2 !== 0 || fields.length / 2 > MAX_FILES) {
