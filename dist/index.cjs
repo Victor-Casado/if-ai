@@ -19522,6 +19522,7 @@ var import_node_child_process = require("node:child_process");
 var import_node_util = require("node:util");
 var exec = (0, import_node_util.promisify)(import_node_child_process.execFile);
 var MAX_FILES = 200;
+var MAX_GIT_OUTPUT_BYTES = 2e6;
 var flags = [
   "--no-ext-diff",
   "--no-textconv",
@@ -19534,15 +19535,20 @@ async function git(cwd, args) {
     const { stdout } = await exec("git", ["--no-literal-pathspecs", ...args], {
       cwd,
       encoding: "buffer",
-      maxBuffer: 2e6,
+      maxBuffer: MAX_GIT_OUTPUT_BYTES,
       timeout: 3e4,
       windowsHide: true,
       env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" }
     });
     return new TextDecoder("utf-8", { fatal: true }).decode(stdout);
-  } catch {
+  } catch (error2) {
+    if (error2?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
+      throw new ActionError(
+        `One file's diff is larger than the ${MAX_GIT_OUTPUT_BYTES / 1e6} MB this Action can read. Nothing was truncated. Exclude that file with paths, or split the change.`
+      );
+    }
     throw new ActionError(
-      "Cannot read the complete Git diff. Use actions/checkout with fetch-depth: 0 and ensure both event commits exist. Git output must be UTF-8 and below 2 MB per command."
+      "Cannot read the complete Git diff. Use actions/checkout with fetch-depth: 0 and ensure both event commits exist. Git output must be UTF-8."
     );
   }
 }
