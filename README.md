@@ -36,7 +36,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: Victor-Casado/if-ai@v1.1.0
+      - uses: Victor-Casado/if-ai@v1.2.0
         with:
           condition: This change does not remove or weaken existing tests.
           min-confidence: '0.90'
@@ -48,10 +48,10 @@ Done. Open a PR that guts a test and watch it go red.
 
 Change the `condition:` line to whatever you actually care about. That line is the product.
 
-The tag above is readable; a tag is also movable. This step receives your API key, so pin it once you are past trying it out:
+The tag above is readable; a tag is also movable. This step receives your API key, so pin it to a commit once you are past trying it out. Every [release](https://github.com/Victor-Casado/if-ai/releases) lists its full SHA:
 
 ```yaml
-- uses: Victor-Casado/if-ai@6e5a7d70f91c2ee24078638d62532e035a58a718 # v1.1.0
+- uses: Victor-Casado/if-ai@<full-sha-from-the-release> # v1.2.0
 ```
 
 ## Rules people write
@@ -124,7 +124,7 @@ Run it on real PRs for a week before you make the `if-ai` job required.
 
 The workflow above skips fork PRs, which means a required if-ai check does not cover them: a skipped job satisfies a required check. Use the [fork workflow](examples/fork-pr.yml) with its approval-gated environment if that gap matters. Dependabot needs its own secret configuration.
 
-Diff modes read every change hunk with three context lines, not the whole repository, and need a full-history checkout. Scope a rule with `paths` so it only sees the files it is about. The provider decides how much content it can evaluate and its rejection is reported, rather than guessed at in advance. Binary files, LFS pointers, and submodules fail explicitly; content is never silently truncated.
+Diff modes read every change hunk with three context lines, not the whole repository, and need a full-history checkout. Scope a rule with `paths` so it only sees the files it is about. The provider decides how much content it can evaluate and its rejection is reported, rather than guessed at in advance. Binary files, LFS pointers, and submodules fail explicitly; content is never silently truncated. Every numeric limit is a budget with a default you can change.
 
 Your diff or description goes to TypeSafe, through OpenRouter by default. Read [SECURITY.md](SECURITY.md) before pointing this at private code or wiring secrets into fork workflows. For a direct TypeSafe key, set `provider: typesafe`.
 
