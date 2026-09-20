@@ -1,0 +1,37 @@
+name: Probe provider input limits
+# One-off investigation, run by hand. Sends synthetic oversized payloads to
+# find where a provider actually rejects a request, so the Action's own limit
+# can be set from evidence. No repository content is sent.
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: Provider to probe
+        type: choice
+        options: [openrouter, typesafe, both]
+        default: both
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+      - name: Probe OpenRouter
+        if: inputs.provider == 'openrouter' || inputs.provider == 'both'
+        env:
+          IF_AI_PROVIDER: openrouter
+          IF_AI_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: node scripts/probe-limits.mjs
+      - name: Probe TypeSafe
+        if: inputs.provider == 'typesafe' || inputs.provider == 'both'
+        env:
+          IF_AI_PROVIDER: typesafe
+          IF_AI_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+        run: node scripts/probe-limits.mjs

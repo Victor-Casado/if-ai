@@ -5,6 +5,10 @@ import type { Subject } from './check.js';
 
 const exec = promisify(execFile);
 const MAX_FILES = 200;
+// Node buffers a child process's stdout in memory, so this is a hard ceiling on
+// what the Action can read at all, not a policy choice. Verified: a 1.9 MB diff
+// is read in full and a 2.1 MB diff is not.
+export const MAX_GIT_OUTPUT_BYTES = 2_000_000;
 const flags = [
   '--no-ext-diff',
   '--no-textconv',
@@ -18,15 +22,21 @@ async function git(cwd: string, args: string[]): Promise<string> {
     const { stdout } = await exec('git', ['--no-literal-pathspecs', ...args], {
       cwd,
       encoding: 'buffer',
-      maxBuffer: 2_000_000,
+      maxBuffer: MAX_GIT_OUTPUT_BYTES,
       timeout: 30_000,
       windowsHide: true,
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' },
     });
     return new TextDecoder('utf-8', { fatal: true }).decode(stdout);
-  } catch {
+  } catch (error) {
+    // Too big to read and unable to read need different fixes, so say which.
+    if ((error as { code?: string } | undefined)?.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+      throw new ActionError(
+        `This pull request is too large to evaluate: a single Git command produced more than ${MAX_GIT_OUTPUT_BYTES / 1_000_000} MB of output. Nothing was truncated. Use per-file mode, or scope the rule with paths.`,
+      );
+    }
     throw new ActionError(
-      'Cannot read the complete Git diff. Use actions/checkout with fetch-depth: 0 and ensure both event commits exist. Git output must be UTF-8 and below 2 MB per command.',
+      'Cannot read the complete Git diff. Use actions/checkout with fetch-depth: 0 and ensure both event commits exist. Git output must be UTF-8.',
     );
   }
 }
