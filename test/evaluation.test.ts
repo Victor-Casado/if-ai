@@ -1,9 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ActionError, readConfig, readPullRequest, type Config } from '../src/config.js';
+import { ActionError, DEFAULTS, readConfig, readPullRequest, type Config } from '../src/config.js';
 import { checkSubjects } from '../src/check.js';
 import {
-  MAX_ATTEMPTS,
-  MAX_REQUEST_BYTES,
   evaluate,
   isRetryableStatus,
   parseDecision,
@@ -20,6 +18,11 @@ const baseConfig: Config = {
   provider: 'typesafe',
   model: 'jev-1.13.0',
   paths: [],
+  maxFiles: DEFAULTS.maxFiles,
+  timeoutMs: DEFAULTS.timeoutSeconds * 1_000,
+  retries: DEFAULTS.retries,
+  maxRequestBytes: DEFAULTS.maxRequestBytes,
+  maxFileBytes: DEFAULTS.maxFileBytes,
 };
 const response = (choice = 'true', confidence = 0.9) => ({
   answers: {
@@ -66,10 +69,42 @@ describe('inputs', () => {
       'src/**',
       ':(exclude)dist/**',
     ]);
-    expect(() => read({ paths: Array.from({ length: 51 }, () => 'a').join('\n') })).toThrow(
-      'at most 50',
-    );
-    expect(() => read({ paths: 'a'.repeat(201) })).toThrow('200 UTF-8 bytes');
+    // Git decides what a pathspec may be, and how many it will take.
+    expect(
+      read({ paths: Array.from({ length: 400 }, (_, i) => `f${i}`).join('\n') }).paths,
+    ).toHaveLength(400);
+    expect(read({ paths: 'a'.repeat(5_000) }).paths).toHaveLength(1);
+  });
+  it('reads every budget, defaulting each one', () => {
+    const read = (extra: Record<string, string>) =>
+      readConfig((n) => ({ ...inputs, ...extra })[n] || '');
+    expect(read({})).toMatchObject({
+      maxFiles: DEFAULTS.maxFiles,
+      timeoutMs: DEFAULTS.timeoutSeconds * 1_000,
+      retries: DEFAULTS.retries,
+      maxRequestBytes: DEFAULTS.maxRequestBytes,
+      maxFileBytes: DEFAULTS.maxFileBytes,
+    });
+    expect(
+      read({
+        'max-files': '5',
+        'timeout-seconds': '90',
+        retries: '0',
+        'max-request-bytes': '4000',
+        'max-file-bytes': '9000',
+      }),
+    ).toMatchObject({
+      maxFiles: 5,
+      timeoutMs: 90_000,
+      retries: 0,
+      maxRequestBytes: 4_000,
+      maxFileBytes: 9_000,
+    });
+    // Zero retries is a real choice; zero files or seconds is not.
+    expect(() => read({ 'max-files': '0' })).toThrow('max-files must be 1 or greater');
+    expect(() => read({ 'timeout-seconds': '0' })).toThrow('must be 1 or greater');
+    expect(() => read({ retries: '-1' })).toThrow('whole number');
+    expect(() => read({ 'max-files': '1.5' })).toThrow('whole number');
   });
   it('selects provider-specific defaults and preserves explicit model identifiers', () => {
     const read = (extra: Record<string, string>) =>
@@ -87,7 +122,12 @@ describe('inputs', () => {
       '~typesafe/jev-latest',
     );
     expect(() => read({ provider: 'other' })).toThrow('provider must be');
-    expect(() => read({ model: 'model\nInjected' })).toThrow('Invalid model');
+    // The provider owns its naming. A fifth of OpenRouter's catalog carries a
+    // suffix an earlier allowlist here rejected, so only unsafe names fail.
+    expect(read({ model: 'typesafe/jev-1.13:batch' }).model).toBe('typesafe/jev-1.13:batch');
+    expect(read({ model: 'vendor/model@2024-01+ext' }).model).toBe('vendor/model@2024-01+ext');
+    expect(() => read({ model: 'model\nInjected' })).toThrow('control characters');
+    expect(() => read({ model: 'model with spaces' })).toThrow('whitespace');
   });
 });
 
@@ -141,7 +181,7 @@ describe.each(['typesafe', 'openrouter'] as const)('Jev via %s', (provider) => {
     });
   });
   it('rejects oversized input rather than truncating it', () => {
-    expect(() => requestBody(config, 'x'.repeat(MAX_REQUEST_BYTES))).toThrow(
+    expect(() => requestBody(config, 'x'.repeat(DEFAULTS.maxRequestBytes))).toThrow(
       'Nothing was truncated',
     );
     // Sizes the provider accepts must not be rejected locally. Measured: both
@@ -174,7 +214,7 @@ describe.each(['typesafe', 'openrouter'] as const)('Jev via %s', (provider) => {
         new Response('secret-value and private code', { status, headers: { 'retry-after': '0' } }),
       );
     await expect(evaluate(config, 'private code', fetcher)).rejects.toThrow(`HTTP ${status}`);
-    expect(fetcher).toHaveBeenCalledTimes(MAX_ATTEMPTS);
+    expect(fetcher).toHaveBeenCalledTimes(DEFAULTS.retries + 1);
   });
   it('returns the decision when the retry succeeds', async () => {
     const fetcher = vi

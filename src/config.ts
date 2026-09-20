@@ -8,19 +8,40 @@ export interface Config {
   provider: Provider;
   model: string;
   paths: string[];
+  maxFiles: number;
+  timeoutMs: number;
+  retries: number;
+  maxRequestBytes: number;
+  maxFileBytes: number;
 }
 
-const MAX_PATHS = 50;
-const MAX_PATH_BYTES = 200;
+// Budgets this Action invented, so every one is yours to change. None of them
+// describe a provider constraint: the provider decides what it can evaluate and
+// says so, and that answer is reported rather than guessed at in advance.
+export const DEFAULTS = {
+  maxFiles: 200,
+  timeoutSeconds: 30,
+  retries: 1,
+  maxRequestBytes: 2_000_000,
+  maxFileBytes: 2_000_000,
+} as const;
 
 // Only errors deliberately written by us may reach CI logs.
 export class ActionError extends Error {}
 
+function positiveInteger(raw: string, name: string, fallback: number, minimum = 1): number {
+  const text = raw.trim();
+  if (!text) return fallback;
+  if (!/^\d+$/.test(text)) throw new ActionError(`${name} must be a whole number.`);
+  const value = Number(text);
+  if (!Number.isSafeInteger(value) || value < minimum)
+    throw new ActionError(`${name} must be ${minimum} or greater.`);
+  return value;
+}
+
 export function readConfig(input: (name: string) => string): Config {
   const condition = input('condition').trim();
   if (!condition) throw new ActionError('condition is required.');
-  if (Buffer.byteLength(condition) > 4000)
-    throw new ActionError('condition exceeds 4,000 UTF-8 bytes.');
   const threshold = input('min-confidence').trim();
   if (!/^(?:0(?:\.\d+)?|1(?:\.0+)?)$/.test(threshold)) {
     throw new ActionError(
@@ -41,18 +62,42 @@ export function readConfig(input: (name: string) => string): Config {
     );
   const model =
     input('model').trim() || (provider === 'openrouter' ? 'typesafe/jev-1.13' : 'jev-1.13.0');
-  if (!/^[a-zA-Z0-9/~._-]{1,100}$/.test(model)) throw new ActionError('Invalid model identifier.');
+  // Providers own their model naming, and the grammar moves: a fifth of
+  // OpenRouter's catalog carries a `:free` or `:batch` suffix that an earlier
+  // allowlist here rejected. Reject only what could harm the request itself,
+  // and let the provider decide whether a name exists.
+  if (!model || /[\s\u0000-\u001f\u007f]/.test(model))
+    throw new ActionError('model must not be empty or contain whitespace or control characters.');
   // Git pathspecs, one per line. Passed after `--`, so a leading dash is a
   // pathspec and never an option.
   const paths = input('paths')
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line !== '');
-  if (paths.length > MAX_PATHS)
-    throw new ActionError(`paths accepts at most ${MAX_PATHS} entries.`);
-  if (paths.some((path) => Buffer.byteLength(path) > MAX_PATH_BYTES))
-    throw new ActionError(`Each paths entry must be ${MAX_PATH_BYTES} UTF-8 bytes or fewer.`);
-  return { condition, minConfidence: Number(threshold), mode, apiKey, provider, model, paths };
+  const timeoutSeconds = positiveInteger(
+    input('timeout-seconds'),
+    'timeout-seconds',
+    DEFAULTS.timeoutSeconds,
+  );
+  return {
+    condition,
+    minConfidence: Number(threshold),
+    mode,
+    apiKey,
+    provider,
+    model,
+    paths,
+    maxFiles: positiveInteger(input('max-files'), 'max-files', DEFAULTS.maxFiles),
+    timeoutMs: timeoutSeconds * 1_000,
+    // Zero is meaningful here: it turns off the retry and its second paid call.
+    retries: positiveInteger(input('retries'), 'retries', DEFAULTS.retries, 0),
+    maxRequestBytes: positiveInteger(
+      input('max-request-bytes'),
+      'max-request-bytes',
+      DEFAULTS.maxRequestBytes,
+    ),
+    maxFileBytes: positiveInteger(input('max-file-bytes'), 'max-file-bytes', DEFAULTS.maxFileBytes),
+  };
 }
 
 export interface PullRequest {

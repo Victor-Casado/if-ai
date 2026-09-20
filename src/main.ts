@@ -32,7 +32,7 @@ async function main(): Promise<void> {
     config.mode,
     pr,
     process.env.GITHUB_WORKSPACE || process.cwd(),
-    config.paths,
+    config,
   );
   if (subjects.length === 0) {
     // Vacuously satisfied: an empty conjunction is true, and nothing was
