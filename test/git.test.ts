@@ -292,7 +292,10 @@ it('honors a lowered max-file-bytes budget', async () => {
 it('keeps the change list readable when max-file-bytes is small', async () => {
   const { cwd, base } = await repository();
   // Enough paths that the raw change list alone exceeds a tiny file budget.
-  for (let i = 0; i < 60; i++)
+  // Each record is roughly 80 bytes, so ten clear 200 comfortably. Kept small
+  // because every file costs two Git processes, and spawning is slow on
+  // Windows: sixty files timed out there at five seconds.
+  for (let i = 0; i < 10; i++)
     await writeFile(join(cwd, `some-fairly-long-file-name-${i}.txt`), 'change\n');
   const head = commit(cwd);
   const pr = { body: '', base, head };
@@ -303,6 +306,6 @@ it('keeps the change list readable when max-file-bytes is small', async () => {
   });
   // Metadata has its own ceiling, so the list is read and each patch is judged
   // on its own rather than the whole run failing before it starts.
-  expect(subjects).toHaveLength(60);
+  expect(subjects).toHaveLength(10);
   expect(subjects.some((subject) => subject.error?.includes('change list'))).toBe(false);
 });
