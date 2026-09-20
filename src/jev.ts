@@ -1,6 +1,11 @@
 import { ActionError, record, type Config, type Provider } from './config.js';
 
-export const MAX_REQUEST_BYTES = 28_000;
+// Not a model limit. The provider decides what it can evaluate, and rejects
+// what it cannot with a 400 that is explained back to the reader. This exists
+// only so an absurd payload fails in milliseconds instead of spending the whole
+// deadline uploading itself. Both providers were measured rejecting at 203 KB,
+// so nothing either would accept comes close to this.
+export const MAX_REQUEST_BYTES = 2_000_000;
 export const REQUEST_TIMEOUT_MS = 30_000;
 // One retry, inside the existing deadline, so a rate limit or a brief provider
 // outage does not turn into a red check that only a rerun can clear.
@@ -77,7 +82,7 @@ export function requestBody(config: Config, content: string): string {
   });
   if (Buffer.byteLength(body) > MAX_REQUEST_BYTES) {
     throw new ActionError(
-      'Input exceeds the 28,000-byte request limit. Nothing was truncated. Use per-file mode for a large combined diff; reduce the PR if a single file is too large.',
+      `This pull request is too large to send: the request would be over ${MAX_REQUEST_BYTES / 1_000_000} MB. Nothing was truncated. Use per-file mode, or scope the rule with paths.`,
     );
   }
   return body;

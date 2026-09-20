@@ -3,6 +3,7 @@ import { ActionError, readConfig, readPullRequest, type Config } from '../src/co
 import { checkSubjects } from '../src/check.js';
 import {
   MAX_ATTEMPTS,
+  MAX_REQUEST_BYTES,
   evaluate,
   isRetryableStatus,
   parseDecision,
@@ -140,7 +141,12 @@ describe.each(['typesafe', 'openrouter'] as const)('Jev via %s', (provider) => {
     });
   });
   it('rejects oversized input rather than truncating it', () => {
-    expect(() => requestBody(config, 'x'.repeat(28_000))).toThrow('Nothing was truncated');
+    expect(() => requestBody(config, 'x'.repeat(MAX_REQUEST_BYTES))).toThrow(
+      'Nothing was truncated',
+    );
+    // Sizes the provider accepts must not be rejected locally. Measured: both
+    // providers accept 102 KB and reject 203 KB.
+    expect(() => requestBody(config, 'x'.repeat(150_000))).not.toThrow();
   });
   it.each([
     null,
