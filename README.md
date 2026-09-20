@@ -9,7 +9,7 @@
 You keep leaving the same review comment. _Where's the test plan? You deleted that test._ Write the rule once as a workflow step, and every PR gets checked before a human opens it.
 
 ```yaml
-- uses: Victor-Casado/if-ai@v1.0.1
+- uses: Victor-Casado/if-ai@v1.1.0
   with:
     condition: This change does not remove or weaken existing tests.
     min-confidence: '0.90'
@@ -103,7 +103,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: Victor-Casado/if-ai@v1.0.1
+      - uses: Victor-Casado/if-ai@v1.1.0
         id: policy
         with:
           condition: This change does not remove or weaken existing tests.

@@ -15,7 +15,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: Victor-Casado/if-ai@v1.0.1
+      - uses: Victor-Casado/if-ai@v1.1.0
         with:
           mode: per-file
           condition: >-
