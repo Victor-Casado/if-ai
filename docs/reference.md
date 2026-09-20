@@ -32,15 +32,20 @@ Per-file evaluations cannot see other files. PR-body mode checks the description
 
 ## Inputs
 
-| Input            | Required | Description                                                                                                            |
-| ---------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `condition`      | Yes      | Statement that must be true. Up to 4,000 UTF-8 bytes.                                                                  |
-| `min-confidence` | Yes      | Number from `0` to `1`, inclusive, such as `'0.90'`. No default.                                                       |
-| `api-key`        | Yes      | Key for the selected provider, supplied as a secret.                                                                   |
-| `provider`       | No       | `typesafe` or `openrouter`. Defaults to `openrouter`.                                                                  |
-| `mode`           | No       | `pr-body`, `diff`, or `per-file`. Defaults to `diff`.                                                                  |
-| `paths`          | No       | Git pathspecs, one per line, limiting which changed files are evaluated. Ignored in `pr-body` mode.                    |
-| `model`          | No       | Defaults to `jev-1.13.0` for TypeSafe or `typesafe/jev-1.13` for OpenRouter. Use the selected provider's Jev model ID. |
+| Input               | Required | Description                                                                                                            |
+| ------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `condition`         | Yes      | Statement that must be true. Up to 4,000 UTF-8 bytes.                                                                  |
+| `min-confidence`    | Yes      | Number from `0` to `1`, inclusive, such as `'0.90'`. No default.                                                       |
+| `api-key`           | Yes      | Key for the selected provider, supplied as a secret.                                                                   |
+| `provider`          | No       | `typesafe` or `openrouter`. Defaults to `openrouter`.                                                                  |
+| `mode`              | No       | `pr-body`, `diff`, or `per-file`. Defaults to `diff`.                                                                  |
+| `paths`             | No       | Git pathspecs, one per line, limiting which changed files are evaluated. Ignored in `pr-body` mode.                    |
+| `max-files`         | No       | Largest number of changed files to evaluate, after `paths` filtering. Defaults to `200`.                               |
+| `timeout-seconds`   | No       | Deadline for one evaluation, covering every attempt. Defaults to `30`.                                                 |
+| `retries`           | No       | Retries after a rate limit or server fault, inside the deadline. Defaults to `1`. `0` disables the second paid call.   |
+| `max-request-bytes` | No       | Largest request to send. Defaults to `2000000`.                                                                        |
+| `max-file-bytes`    | No       | Largest diff to read for one file. Defaults to `2000000`.                                                              |
+| `model`             | No       | Defaults to `jev-1.13.0` for TypeSafe or `typesafe/jev-1.13` for OpenRouter. Use the selected provider's Jev model ID. |
 
 For per-file rules, say how unrelated files should be treated. For example: "Any new user-facing error message explains how to recover. Changes without error messages satisfy this condition."
 
@@ -76,6 +81,16 @@ Individual statuses are `passed`, `condition-false`, `low-confidence`, or `error
 if-ai uses Jev's two-option Choice API to obtain native confidence. The minimum file confidence is not a joint probability, and model confidence is not measured accuracy. [TypeSafe explains the distinction](https://docs.typesafe.ai/confidence).
 
 Use `if: always()` on a later step to inspect outputs after failure. Pass outputs through environment variables when using them in shell commands.
+
+## Budgets
+
+Every numeric limit above is a budget this Action chose, not a provider constraint, and each one is yours to change. They exist because something has to bound cost, time, or memory, and the defaults are a starting point rather than a discovered truth.
+
+None of them describe what the model can accept. Neither provider publishes a request size limit, so if-ai does not invent one: it sends the request and reports the rejection. `max-request-bytes` and `max-file-bytes` are transport and memory guards that sit far above anything either provider would take, so that an impossible request fails at once rather than spending the deadline on itself.
+
+`max-files` bounds paid calls, which matters most in `per-file` mode where each file is its own request. `retries` set to `0` guarantees one paid call per evaluation.
+
+Model identifiers are the provider's to define. if-ai rejects only a name that is empty or carries whitespace or control characters, and lets the provider say whether the rest exists. An earlier allowlist here rejected a fifth of OpenRouter's catalog, which uses suffixes such as `:free` and `:batch`.
 
 ## Skipped jobs and required checks
 

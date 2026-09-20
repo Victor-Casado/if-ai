@@ -1,20 +1,12 @@
 import { ActionError, record, type Config, type Provider } from './config.js';
 
-// Not a model limit. The provider decides what it can evaluate, and rejects
-// what it cannot with a 400 that is explained back to the reader. This exists
-// only so an absurd payload fails in milliseconds instead of spending the whole
-// deadline uploading itself. Both providers were measured rejecting at 203 KB,
-// so nothing either would accept comes close to this.
-export const MAX_REQUEST_BYTES = 2_000_000;
-export const REQUEST_TIMEOUT_MS = 30_000;
-// One retry, inside the existing deadline, so a rate limit or a brief provider
-// outage does not turn into a red check that only a rerun can clear.
-export const MAX_ATTEMPTS = 2;
+// Retries and the deadline are configured per run; see DEFAULTS in config.ts.
 const DEFAULT_RETRY_DELAY_MS = 1_000;
 // A provider asking for longer than this is telling us it will not be ready
 // inside the deadline. Report the status instead of stalling and asking again.
 const MAX_RETRY_DELAY_MS = 10_000;
-const TIMEOUT_MESSAGE = 'Jev request timed out after 30 seconds. Rerun the check.';
+const timeoutMessage = (ms: number) =>
+  `Jev request timed out after ${ms / 1_000} seconds. Rerun the check, or raise timeout-seconds.`;
 const ENDPOINTS = {
   typesafe: 'https://api.typesafe.ai/v1/systemone',
   openrouter: 'https://openrouter.ai/api/alpha/decisions',
@@ -44,15 +36,15 @@ export function retryDelayMs(header: string | null, now = Date.now()): number {
   return DEFAULT_RETRY_DELAY_MS;
 }
 
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
+function sleep(ms: number, signal: AbortSignal, expired: string): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) {
-      reject(new ActionError(TIMEOUT_MESSAGE));
+      reject(new ActionError(expired));
       return;
     }
     const onAbort = () => {
       clearTimeout(timer);
-      reject(new ActionError(TIMEOUT_MESSAGE));
+      reject(new ActionError(expired));
     };
     const timer = setTimeout(() => {
       signal.removeEventListener('abort', onAbort);
@@ -80,9 +72,9 @@ export function requestBody(config: Config, content: string): string {
       },
     },
   });
-  if (Buffer.byteLength(body) > MAX_REQUEST_BYTES) {
+  if (Buffer.byteLength(body) > config.maxRequestBytes) {
     throw new ActionError(
-      `This pull request is too large to send: the request would be over ${MAX_REQUEST_BYTES / 1_000_000} MB. Nothing was truncated. Use per-file mode, or scope the rule with paths.`,
+      `This pull request is too large to send: the request is over the ${config.maxRequestBytes}-byte max-request-bytes budget. Nothing was truncated. Raise max-request-bytes, use per-file mode, or scope the rule with paths.`,
     );
   }
   return body;
@@ -194,11 +186,12 @@ export async function evaluate(
   const body = requestBody(config, content);
   // One deadline for the whole call. A retry spends the remaining budget and
   // can never extend it, so the documented 30 seconds still holds.
-  const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  const signal = AbortSignal.timeout(config.timeoutMs);
+  const expired = timeoutMessage(config.timeoutMs);
   const startedAt = Date.now();
-  const remainingMs = () => REQUEST_TIMEOUT_MS - (Date.now() - startedAt);
+  const remainingMs = () => config.timeoutMs - (Date.now() - startedAt);
   for (let attempt = 1; ; attempt++) {
-    const lastAttempt = attempt >= MAX_ATTEMPTS;
+    const lastAttempt = attempt > config.retries;
     try {
       const response = await fetcher(ENDPOINTS[config.provider], {
         method: 'POST',
@@ -222,12 +215,12 @@ export async function evaluate(
           // Reading the body can be what exhausts the deadline. errorKind
           // swallows that abort, so check before reporting a status that would
           // name the wrong cause.
-          if (signal.aborted) throw new ActionError(TIMEOUT_MESSAGE);
+          if (signal.aborted) throw new ActionError(expired);
           throw httpError(response.status, config.provider, kind);
         }
         await response.body?.cancel();
         onRetry(response.status, delay);
-        await sleep(delay, signal);
+        await sleep(delay, signal, expired);
         continue;
       }
       // Bound the response too; never print provider bodies, which may echo source or secrets.
@@ -254,7 +247,7 @@ export async function evaluate(
       return parseDecision(parsed);
     } catch (error) {
       if (error instanceof ActionError) throw error;
-      if (signal.aborted) throw new ActionError(TIMEOUT_MESSAGE);
+      if (signal.aborted) throw new ActionError(expired);
       // A transport failure is not retried: it describes the runner or the
       // network, not a provider state that clears on its own.
       throw new ActionError('Could not reach Jev. Check connectivity and rerun the check.');
