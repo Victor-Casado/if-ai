@@ -37,10 +37,15 @@ jobs:
             No existing test is deleted or weakened by this change. Replacing a
             test with an equivalent or stronger test satisfies this condition. A
             change that modifies no test file satisfies this condition.
-          # This rule asserts a universal negative across the whole diff, where
-          # most of the evidence is absent. 0.80 is the bar that kind of claim
-          # supports; rules with directly checkable evidence can ask for more.
-          min-confidence: '0.80'
+          # Both halves of the judgement: whether a test changed, and whether
+          # the source change justifies it. dist/ is a generated bundle of src/,
+          # and everything else is noise the model would reason around.
+          paths: |
+            src/**
+            test/**
+          # 0.80 was the bar for this rule read against an unscoped diff. Scoped
+          # to the evidence, it can be asked for more.
+          min-confidence: '0.85'
           mode: diff
           api-key: ${{ secrets.OPENROUTER_API_KEY }}
   secrets:
@@ -60,6 +65,12 @@ jobs:
           condition: >-
             No code added in this change logs an API key, request content, or a
             raw provider error response.
-          min-confidence: '0.80'
+          # The code that can actually do this. scripts/live-smoke.mjs hands a
+          # real key to a child process, so it belongs here. test/ is excluded:
+          # its fixtures contain literal secret-looking strings by design.
+          paths: |
+            src/**
+            scripts/**
+          min-confidence: '0.85'
           mode: diff
           api-key: ${{ secrets.OPENROUTER_API_KEY }}
