@@ -123,10 +123,51 @@ function isScore(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
 }
 
-function httpError(status: number, provider: Provider): ActionError {
+// OpenRouter reports an oversized request as HTTP 400 with this marker.
+// TypeSafe returns a bare 400 with no body, so it cannot be told apart from
+// any other bad request and gets the general message.
+const CONTEXT_EXCEEDED_MARKER = 'max_tokens_exceeded';
+const MAX_ERROR_BODY_BYTES = 4_000;
+
+// Reads a bounded prefix of an error body only to recognize a known failure.
+// The text itself is never logged or surfaced; it can echo the diff we sent.
+async function errorKind(response: Response): Promise<'context-exceeded' | undefined> {
+  try {
+    const reader = response.body?.getReader();
+    if (!reader) return undefined;
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      size += value.byteLength;
+      if (size >= MAX_ERROR_BODY_BYTES) {
+        await reader.cancel();
+        break;
+      }
+    }
+    // Slice as well as stop reading: one chunk can arrive larger than the
+    // limit, so the loop alone does not bound what gets scanned.
+    return Buffer.concat(chunks)
+      .subarray(0, MAX_ERROR_BODY_BYTES)
+      .toString('utf8')
+      .includes(CONTEXT_EXCEEDED_MARKER)
+      ? 'context-exceeded'
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function httpError(status: number, provider: Provider, kind?: 'context-exceeded'): ActionError {
   const name = provider === 'openrouter' ? 'OpenRouter' : 'TypeSafe';
   let hint = 'Check the model and request limits.';
-  if (status === 401 || status === 403) hint = `Check your ${name} API key and access.`;
+  if (kind === 'context-exceeded')
+    hint = `The content is larger than the model's context. Use per-file mode, or scope the rule with paths.`;
+  else if (status === 400)
+    hint = `${name} rejected the request as malformed. The usual cause is content larger than the model's context: use per-file mode, or scope the rule with paths.`;
+  else if (status === 401 || status === 403) hint = `Check your ${name} API key and access.`;
   else if (status === 402) hint = `Check your ${name} credits and spending limit.`;
   else if (status === 429) hint = `${name} rate limit reached; rerun later.`;
   else if (status >= 500) hint = `${name} is unavailable; rerun later.`;
@@ -156,7 +197,6 @@ export async function evaluate(
         redirect: 'error',
       });
       if (!response.ok) {
-        await response.body?.cancel();
         const delay = retryDelayMs(response.headers.get('retry-after'));
         // Report the real status rather than a timeout when the provider asks
         // for longer than the cap, or than the deadline has left.
@@ -166,8 +206,10 @@ export async function evaluate(
           delay > MAX_RETRY_DELAY_MS ||
           delay >= remainingMs()
         ) {
-          throw httpError(response.status, config.provider);
+          // Only on the failing path; a retry discards the body instead.
+          throw httpError(response.status, config.provider, await errorKind(response));
         }
+        await response.body?.cancel();
         onRetry(response.status, delay);
         await sleep(delay, signal);
         continue;

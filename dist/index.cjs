@@ -19727,10 +19727,37 @@ function parseDecision(value) {
 function isScore(value) {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
 }
-function httpError(status, provider) {
+var CONTEXT_EXCEEDED_MARKER = "max_tokens_exceeded";
+var MAX_ERROR_BODY_BYTES = 4e3;
+async function errorKind(response) {
+  try {
+    const reader = response.body?.getReader();
+    if (!reader) return void 0;
+    const chunks = [];
+    let size = 0;
+    for (; ; ) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      size += value.byteLength;
+      if (size >= MAX_ERROR_BODY_BYTES) {
+        await reader.cancel();
+        break;
+      }
+    }
+    return Buffer.concat(chunks).subarray(0, MAX_ERROR_BODY_BYTES).toString("utf8").includes(CONTEXT_EXCEEDED_MARKER) ? "context-exceeded" : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function httpError(status, provider, kind) {
   const name = provider === "openrouter" ? "OpenRouter" : "TypeSafe";
   let hint = "Check the model and request limits.";
-  if (status === 401 || status === 403) hint = `Check your ${name} API key and access.`;
+  if (kind === "context-exceeded")
+    hint = `The content is larger than the model's context. Use per-file mode, or scope the rule with paths.`;
+  else if (status === 400)
+    hint = `${name} rejected the request as malformed. The usual cause is content larger than the model's context: use per-file mode, or scope the rule with paths.`;
+  else if (status === 401 || status === 403) hint = `Check your ${name} API key and access.`;
   else if (status === 402) hint = `Check your ${name} credits and spending limit.`;
   else if (status === 429) hint = `${name} rate limit reached; rerun later.`;
   else if (status >= 500) hint = `${name} is unavailable; rerun later.`;
@@ -19753,11 +19780,11 @@ async function evaluate(config, content, fetcher = fetch, onRetry = () => {
         redirect: "error"
       });
       if (!response.ok) {
-        await response.body?.cancel();
         const delay = retryDelayMs(response.headers.get("retry-after"));
         if (lastAttempt || !isRetryableStatus(response.status) || delay > MAX_RETRY_DELAY_MS || delay >= remainingMs()) {
-          throw httpError(response.status, config.provider);
+          throw httpError(response.status, config.provider, await errorKind(response));
         }
+        await response.body?.cancel();
         onRetry(response.status, delay);
         await sleep(delay, signal);
         continue;
